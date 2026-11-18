@@ -34,27 +34,27 @@ export function Card({
   return (
     <section className={cn('bg-white rounded-2xl border border-slate-200 shadow-xs', className)}>
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-100">
+        <header className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-slate-100">
           <h2 className="font-semibold text-slate-900 text-sm flex items-center gap-2 min-w-0">
             {icon}
             <span className="truncate">{title}</span>
           </h2>
-          {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+          {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
         </header>
       )}
-      <div className={cn('p-5', bodyClassName)}>{children}</div>
+      <div className={cn('p-4', bodyClassName)}>{children}</div>
     </section>
   );
 }
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: React.ReactNode }) {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 mb-4">
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">{title}</h1>
-        {description && <p className="text-sm text-slate-500 mt-0.5">{description}</p>}
+    <div className="flex items-center justify-between gap-2 mb-3">
+      <div className="min-w-0">
+        <h1 className="text-base sm:text-lg font-bold text-slate-900 truncate">{title}</h1>
+        {description && <p className="text-xs text-slate-500 mt-0.5 truncate">{description}</p>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
     </div>
   );
 }
@@ -120,7 +120,7 @@ export function IconButton({
       title={label}
       aria-label={label}
       className={cn(
-        'p-1.5 rounded-lg transition-colors disabled:opacity-40',
+        'p-2 sm:p-1.5 rounded-lg transition-colors disabled:opacity-40',
         tone === 'danger' ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50',
         className
       )}
@@ -136,7 +136,7 @@ export function IconButton({
 // -----------------------------------------------------------------------------
 
 const inputBase =
-  'w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 disabled:bg-slate-50 disabled:text-slate-500';
+  'w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 sm:py-1.5 text-base sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 disabled:bg-slate-50 disabled:text-slate-500';
 
 export function Field({
   label,
@@ -310,7 +310,7 @@ export function Segmented<T extends string | number>({
   size?: 'sm' | 'md';
 }) {
   return (
-    <div role="radiogroup" className={cn('inline-flex w-full gap-1 bg-slate-100 p-1 rounded-lg', className)}>
+    <div role="radiogroup" className={cn('inline-flex w-full gap-1 bg-slate-100 p-1 rounded-lg overflow-x-auto no-scrollbar', className)}>
       {options.map((o) => (
         <button
           key={String(o.value)}
@@ -450,19 +450,23 @@ export function Modal({
   const widths = { sm: 'max-w-md', md: 'max-w-xl', lg: 'max-w-3xl', xl: 'max-w-5xl' };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-6 print:hidden">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 print:hidden">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]" onClick={onClose} />
-      <div role="dialog" aria-modal="true" className={cn('relative w-full bg-white rounded-2xl shadow-2xl flex flex-col max-h-[92vh]', widths[size])}>
+      <div role="dialog" aria-modal="true" className={cn('relative w-full bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[92dvh] sm:max-h-[90vh]', widths[size])}>
         {title && (
-          <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-100">
-            <h3 className="font-semibold text-slate-900">{title}</h3>
+          <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5 border-b border-slate-100">
+            <h3 className="font-semibold text-slate-900 truncate">{title}</h3>
             <IconButton label="Đóng" onClick={onClose}>
               <X className="w-5 h-5" />
             </IconButton>
           </div>
         )}
-        <div className={cn('flex-1 overflow-y-auto p-5', bodyClassName)}>{children}</div>
-        {footer && <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50/60 rounded-b-2xl">{footer}</div>}
+        <div className={cn('flex-1 overflow-y-auto p-4 sm:p-5', bodyClassName)}>{children}</div>
+        {footer && (
+          <div className="flex justify-end gap-2 px-4 py-3 sm:px-5 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:pb-3 border-t border-slate-100 bg-slate-50/80 sm:rounded-b-2xl">
+            {footer}
+          </div>
+        )}
       </div>
     </div>,
     document.body
@@ -489,12 +493,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ show }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2 max-w-sm print:hidden" aria-live="polite">
+      <div className="fixed top-3 inset-x-3 sm:inset-x-auto sm:top-auto sm:bottom-4 sm:right-4 z-[70] flex flex-col gap-2 sm:max-w-sm pointer-events-none print:hidden" aria-live="polite">
         {items.map((t) => (
           <div
             key={t.id}
             className={cn(
-              'flex items-start gap-2 rounded-xl px-4 py-3 text-sm shadow-lg border bg-white',
+              'pointer-events-auto flex items-start gap-2 rounded-xl px-4 py-3 text-sm shadow-lg border bg-white',
               t.tone === 'success' && 'border-emerald-200 text-emerald-900',
               t.tone === 'error' && 'border-rose-200 text-rose-900',
               t.tone === 'info' && 'border-blue-200 text-blue-900'

@@ -26,16 +26,16 @@ export function QuotePrintModal({
         onClose={onClose}
         size="xl"
         title={
-          <span className="flex items-center gap-3">
-            <span>Xem trước & in</span>
+          <span className="flex flex-wrap items-center gap-2">
+            <span>Xem & in</span>
             <Segmented
               size="sm"
               className="w-auto"
               value={kind}
               onChange={setKind}
               options={[
-                { value: 'quote', label: <span className="inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" />Phiếu báo giá</span> },
-                { value: 'job', label: <span className="inline-flex items-center gap-1"><Wrench className="w-3.5 h-3.5" />Lệnh sản xuất</span> },
+                { value: 'quote', label: <span className="inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" />Báo giá</span> },
+                { value: 'job', label: <span className="inline-flex items-center gap-1"><Wrench className="w-3.5 h-3.5" />Lệnh SX</span> },
               ]}
             />
           </span>
@@ -48,9 +48,9 @@ export function QuotePrintModal({
             </Button>
           </>
         }
-        bodyClassName="bg-slate-100"
+        bodyClassName="bg-slate-100 p-2 sm:p-5"
       >
-        <div className="bg-white shadow-md mx-auto p-6 sm:p-10 max-w-[210mm] min-h-[297mm]">
+        <div className="bg-white shadow-md mx-auto p-3 sm:p-8 max-w-[210mm] sm:min-h-[297mm] overflow-x-auto">
           <QuoteDocument kind={kind} {...doc} />
         </div>
       </Modal>

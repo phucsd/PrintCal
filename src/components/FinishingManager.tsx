@@ -379,7 +379,6 @@ export function FinishingManager() {
     })).filter((g) => g.items.length > 0);
   }, [services, search, category, showInactive]);
 
-  const totalShown = grouped.reduce((n, g) => n + g.items.length, 0);
   const activeCount = services.filter((s) => s.isActive).length;
 
   const openEditor = (id: number | null, initial: FinishingForm) => {
@@ -422,14 +421,14 @@ export function FinishingManager() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Gia công sau in"
-        description="Cán màng, cấn gấp, bế, ép kim, phủ UV, đóng cuốn, dán hộp… – đơn giá dùng cho màn hình tính giá."
+        title="Gia công"
+        description={data ? `${formatNumber(services.length)} dịch vụ · ${formatNumber(activeCount)} đang dùng` : undefined}
         actions={
           <>
-            <Button icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
-              Tải lại
+            <Button size="sm" icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
+              <span className="hidden sm:inline">Tải lại</span>
             </Button>
-            <Button variant="primary" icon={<Plus className="w-4 h-4" />} onClick={openAdd}>
+            <Button size="sm" variant="primary" icon={<Plus className="w-4 h-4" />} onClick={openAdd}>
               Thêm dịch vụ
             </Button>
           </>
@@ -437,38 +436,36 @@ export function FinishingManager() {
       />
 
       <Card bodyClassName="p-3 sm:p-4">
-        <div className="flex flex-col md:flex-row md:items-center gap-3">
+        <div className="flex flex-col md:flex-row md:items-center gap-2.5">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <TextInput
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tìm theo tên hoặc mã…"
+              placeholder="Tìm tên hoặc mã dịch vụ…"
               className="pl-8"
               aria-label="Tìm dịch vụ"
             />
           </div>
-          <Select
-            value={category}
-            onChange={(e) => setCategory(e.target.value as FinishingCategory | 'all')}
-            className="md:w-56"
-            aria-label="Lọc theo nhóm"
-          >
-            <option value="all">Tất cả nhóm</option>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {FINISHING_CATEGORY_LABELS[c]}
-              </option>
-            ))}
-          </Select>
-          <Checkbox checked={showInactive} onChange={setShowInactive} label="Hiện cả dịch vụ đã ngưng" />
+          <div className="flex items-center gap-3">
+            <Select
+              value={category}
+              onChange={(e) => setCategory(e.target.value as FinishingCategory | 'all')}
+              className="flex-1 md:w-52"
+              aria-label="Lọc theo nhóm"
+            >
+              <option value="all">Tất cả nhóm</option>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {FINISHING_CATEGORY_LABELS[c]}
+                </option>
+              ))}
+            </Select>
+            <div className="shrink-0">
+              <Checkbox checked={showInactive} onChange={setShowInactive} label="Đã ngưng" />
+            </div>
+          </div>
         </div>
-        {data && (
-          <p className="text-xs text-slate-500 mt-2">
-            {formatNumber(services.length)} dịch vụ · {formatNumber(activeCount)} đang dùng
-            {totalShown !== services.length && ` · đang hiển thị ${formatNumber(totalShown)}`}
-          </p>
-        )}
       </Card>
 
       {error && (
@@ -491,7 +488,7 @@ export function FinishingManager() {
           <EmptyState
             icon={<Scissors className="w-10 h-10" />}
             title={services.length === 0 ? 'Chưa có dịch vụ gia công nào' : 'Không có dịch vụ phù hợp bộ lọc'}
-            description={services.length === 0 ? 'Thêm dịch vụ đầu tiên để dùng khi tính giá.' : 'Thử đổi từ khoá, nhóm hoặc bật “Hiện cả dịch vụ đã ngưng”.'}
+            description={services.length === 0 ? 'Thêm dịch vụ đầu tiên để dùng khi tính giá.' : 'Thử đổi từ khoá, nhóm hoặc bật “Đã ngưng”.'}
             action={
               services.length === 0 ? (
                 <Button variant="primary" icon={<Plus className="w-4 h-4" />} onClick={openAdd}>
@@ -510,51 +507,87 @@ export function FinishingManager() {
             actions={<Badge tone="slate">{g.items.length}</Badge>}
             bodyClassName="p-0"
           >
-            <Table>
-              <thead>
-                <tr>
-                  <th className={th}>Tên dịch vụ</th>
-                  <th className={th}>Mã</th>
-                  <th className={th}>Cách tính</th>
-                  <th className={cn(th, 'text-right')}>Đơn giá</th>
-                  <th className={cn(th, 'text-right')}>Tối thiểu</th>
-                  <th className={cn(th, 'text-right')}>Tiền khuôn</th>
-                  <th className={cn(th, 'text-center')} title="Chỉ áp dụng in offset">
-                    Bù hao
-                  </th>
-                  <th className={cn(th, 'text-center')}>Trạng thái</th>
-                  <th className={cn(th, 'text-right')}>Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.items.map((s) => (
-                  <tr key={s.id} className={cn('hover:bg-slate-50/70 transition-colors', !s.isActive && 'opacity-60')}>
-                    <td className={cn(td, 'font-medium text-slate-900 min-w-44')}>{s.name}</td>
-                    <td className={cn(td, 'font-mono text-xs text-slate-500 whitespace-nowrap')}>{s.code}</td>
-                    <td className={cn(td, 'whitespace-nowrap')}>
-                      <Badge tone={CALC_TONE[s.calcType]}>{FINISHING_CALC_LABELS[s.calcType]}</Badge>
-                    </td>
-                    <td className={cn(td, 'text-right tabular-nums whitespace-nowrap font-semibold text-slate-800')}>{priceLabel(s)}</td>
-                    <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>
-                      {s.calcType === 'fixed' || s.minPrice <= 0 ? <span className="text-slate-300">—</span> : formatVnd(s.minPrice)}
-                    </td>
-                    <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>
-                      {s.setupFee > 0 ? formatVnd(s.setupFee) : <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className={cn(td, 'text-center tabular-nums whitespace-nowrap text-xs')}>
-                      {s.wastePercent > 0 || s.wasteSheets > 0 ? (
-                        <span title="Chỉ áp dụng in offset">
-                          {formatNumber(s.wastePercent, true)}% + {formatNumber(s.wasteSheets)} tờ
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
-                    </td>
-                    <td className={cn(td, 'text-center')}>
-                      {s.isActive ? <Badge tone="green">Đang dùng</Badge> : <Badge tone="slate">Ngưng</Badge>}
-                    </td>
-                    <td className={cn(td, 'text-right whitespace-nowrap')}>
-                      <div className="inline-flex items-center gap-0.5">
+            {/* Bảng Desktop */}
+            <div className="hidden md:block">
+              <Table>
+                <thead>
+                  <tr>
+                    <th className={th}>Tên dịch vụ</th>
+                    <th className={th}>Cách tính</th>
+                    <th className={cn(th, 'text-right')}>Đơn giá</th>
+                    <th className={cn(th, 'text-right')}>Tối thiểu</th>
+                    <th className={cn(th, 'text-right')}>Tiền khuôn</th>
+                    <th className={cn(th, 'text-center')} title="Chỉ áp dụng in offset">
+                      Bù hao
+                    </th>
+                    <th className={cn(th, 'text-right')}>Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.items.map((s) => (
+                    <tr key={s.id} className={cn('hover:bg-slate-50/70 transition-colors', !s.isActive && 'opacity-60')}>
+                      <td className={cn(td, 'font-medium text-slate-900 min-w-44')}>
+                        <div className="flex items-center gap-1.5">
+                          <span>{s.name}</span>
+                          {!s.isActive && <Badge tone="slate">Ngưng</Badge>}
+                        </div>
+                      </td>
+                      <td className={cn(td, 'whitespace-nowrap')}>
+                        <Badge tone={CALC_TONE[s.calcType]}>{FINISHING_CALC_LABELS[s.calcType]}</Badge>
+                      </td>
+                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap font-semibold text-slate-800')}>{priceLabel(s)}</td>
+                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>
+                        {s.calcType === 'fixed' || s.minPrice <= 0 ? <span className="text-slate-300">—</span> : formatVnd(s.minPrice)}
+                      </td>
+                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>
+                        {s.setupFee > 0 ? formatVnd(s.setupFee) : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className={cn(td, 'text-center tabular-nums whitespace-nowrap text-xs')}>
+                        {s.wastePercent > 0 || s.wasteSheets > 0 ? (
+                          <span title="Chỉ áp dụng in offset">
+                            {formatNumber(s.wastePercent, true)}% + {formatNumber(s.wasteSheets)} tờ
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                      <td className={cn(td, 'text-right whitespace-nowrap')}>
+                        <div className="inline-flex items-center gap-0.5">
+                          <IconButton label="Sửa" onClick={() => openEdit(s)}>
+                            <Edit2 className="w-4 h-4" />
+                          </IconButton>
+                          <IconButton label={s.isActive ? 'Ngưng sử dụng' : 'Bật lại'} onClick={() => toggleActive(s)} disabled={busyId === s.id}>
+                            {s.isActive ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </IconButton>
+                          <IconButton label="Xoá" tone="danger" onClick={() => setConfirmDelete(s)}>
+                            <Trash2 className="w-4 h-4" />
+                          </IconButton>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </div>
+
+            {/* Danh sách Mobile */}
+            <div className="md:hidden divide-y divide-slate-100">
+              {g.items.map((s) => {
+                const extras: string[] = [FINISHING_CALC_LABELS[s.calcType]];
+                if (s.calcType !== 'fixed' && s.minPrice > 0) extras.push(`Tối thiểu ${formatVnd(s.minPrice)}`);
+                if (s.setupFee > 0) extras.push(`Khuôn ${formatVnd(s.setupFee)}`);
+                return (
+                  <div key={s.id} className={cn('p-3.5 space-y-1', !s.isActive && 'opacity-60')}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="font-semibold text-sm text-slate-900 truncate">{s.name}</span>
+                        {!s.isActive && <Badge tone="slate">Ngưng</Badge>}
+                      </div>
+                      <span className="font-bold text-sm text-slate-900 tabular-nums shrink-0">{priceLabel(s)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs text-slate-500 truncate">{extras.join(' · ')}</p>
+                      <div className="inline-flex items-center gap-0.5 shrink-0">
                         <IconButton label="Sửa" onClick={() => openEdit(s)}>
                           <Edit2 className="w-4 h-4" />
                         </IconButton>
@@ -565,11 +598,11 @@ export function FinishingManager() {
                           <Trash2 className="w-4 h-4" />
                         </IconButton>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </Card>
         ))
       )}

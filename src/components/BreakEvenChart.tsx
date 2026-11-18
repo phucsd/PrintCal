@@ -51,13 +51,12 @@ export function BreakEvenChart({ recommendation, currentQty, chosenTech, unit }:
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-slate-700 leading-relaxed">{recommendation.reason}</p>
       {recommendation.breakEvenQty !== null ? (
         <p className="text-xs text-slate-600">
-          Điểm hoà vốn: từ khoảng <strong className="text-indigo-700">{formatNumber(recommendation.breakEvenQty)} {unit}</strong> trở lên in offset rẻ hơn in nhanh.
+          Hoà vốn: từ <strong className="text-indigo-700">{formatNumber(recommendation.breakEvenQty)} {unit}</strong> trở lên, offset rẻ hơn.
         </p>
       ) : (
-        <p className="text-xs text-slate-500">Không có điểm giao giữa 2 công nghệ trong khoảng số lượng khảo sát.</p>
+        <p className="text-xs text-slate-500">{recommendation.reason}</p>
       )}
 
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Biểu đồ đơn giá theo số lượng">
@@ -121,7 +120,7 @@ export function BreakEvenChart({ recommendation, currentQty, chosenTech, unit }:
 }
 
 function Cell({ total, unitPrice, best }: { total: number | null; unitPrice: number | null; best: boolean }) {
-  if (total === null) return <td className="py-1.5 text-right text-slate-400">Không khả thi</td>;
+  if (total === null) return <td className="py-1.5 text-right text-slate-300">—</td>;
   return (
     <td className={cn('py-1.5 text-right tabular-nums', best ? 'text-emerald-700 font-semibold' : 'text-slate-700')}>
       {formatVnd(total)}

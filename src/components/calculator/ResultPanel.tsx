@@ -5,7 +5,7 @@ import { AlertTriangle, Copy, FileText, LayoutGrid, ListOrdered, Loader2, Save, 
 import type { CalculationResult, ProductType } from '@/types';
 import { formatNumber, formatVnd } from '@/lib/format';
 import { PRODUCT_UNITS, WORK_TYPE_LABELS } from '@/lib/engine/constants';
-import { Alert, Badge, Button, Segmented, cn } from '../ui';
+import { Alert, Button, Segmented, cn } from '../ui';
 import { ImpositionVisualizer } from '../ImpositionVisualizer';
 import { BreakEvenChart } from '../BreakEvenChart';
 
@@ -23,6 +23,7 @@ export function ResultPanel({
   onSave,
   onPrint,
   onCopy,
+  onUseBestTech,
 }: {
   result: CalculationResult | null;
   error: string | null;
@@ -37,12 +38,13 @@ export function ResultPanel({
   onSave: () => void;
   onPrint: () => void;
   onCopy: () => void;
+  onUseBestTech?: () => void;
 }) {
   const [tab, setTab] = useState<'breakdown' | 'imposition' | 'compare'>('breakdown');
 
   if (!result) {
     return (
-      <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-sm text-slate-500">
+      <div id="quote-result-panel" className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-sm text-slate-500 scroll-mt-16">
         {error ? (
           <Alert tone="error" title="Không tính được giá">
             {error}
@@ -68,41 +70,44 @@ export function ResultPanel({
         : 'In nhanh gia công';
   const rec = result.recommendation;
   const otherCheaper = rec.bestTech && rec.bestTech !== result.chosenTech;
+  const baseUnitCost = q.productQty ? c.totalBaseCost / q.productQty : 0;
 
   return (
-    <div className="space-y-4">
+    <div id="quote-result-panel" className="space-y-3 scroll-mt-16">
       {/* ---------- Tổng giá ---------- */}
       <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white p-5">
+        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white p-4 sm:p-5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="px-2 py-0.5 rounded-md bg-white/15 text-[11px] font-semibold">{techLabel}</span>
-              {savedCode && <span className="px-2 py-0.5 rounded-md bg-emerald-400/90 text-emerald-950 text-[11px] font-bold">Đã lưu {savedCode}</span>}
+              <span className="px-2 py-0.5 rounded-md bg-white/10 text-[11px] text-blue-100 tabular-nums">
+                Vốn: {formatVnd(baseUnitCost)}/{unit}
+              </span>
+              {savedCode && <span className="px-2 py-0.5 rounded-md bg-emerald-400/90 text-emerald-950 text-[11px] font-bold">{savedCode}</span>}
             </div>
             {calculating && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-blue-100">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Đang tính…
+              <span className="inline-flex items-center gap-1 text-[11px] text-blue-100 shrink-0">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               </span>
             )}
           </div>
-          <div className={cn('mt-3 transition-opacity', stale && 'opacity-60')}>
+          <div className={cn('mt-2.5 transition-opacity', stale && 'opacity-60')}>
             <p className="text-xs text-blue-100">Tổng thanh toán{c.vatAmount > 0 ? ` (gồm VAT ${c.vatPercent}%)` : ''}</p>
             <p className="text-3xl font-black tracking-tight tabular-nums">{formatVnd(c.finalPrice)}</p>
             <p className="text-sm text-blue-100 mt-0.5 tabular-nums">
-              ≈ <strong className="text-white">{formatVnd(c.unitPrice)}</strong> / {unit} · {formatNumber(quantity)} {unit}
+              <strong className="text-white">{formatVnd(c.unitPrice)}</strong> / {unit} · {formatNumber(quantity)} {unit}
             </p>
           </div>
         </div>
 
-        <div className="p-4 space-y-3">
+        <div className="p-3.5 sm:p-4 space-y-3">
           {error && (
             <Alert tone="error" title="Không tính được với thông số hiện tại">
               {error}
-              <span className="block text-xs opacity-80 mt-1">Đang hiển thị kết quả gần nhất.</span>
             </Alert>
           )}
           {result.warnings.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-1">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 space-y-1">
               {result.warnings.map((w, i) => (
                 <p key={i} className="flex gap-1.5 text-xs text-amber-900">
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
@@ -112,10 +117,21 @@ export function ResultPanel({
             </div>
           )}
           {otherCheaper && (
-            <Alert tone="info">
-              {rec.bestTech === 'digital' ? 'In nhanh' : 'In offset'} đang rẻ hơn:{' '}
-              <strong>{formatVnd(rec.bestTech === 'digital' ? rec.digitalTotal : rec.offsetTotal)}</strong>. Chọn “Tự động” để dùng phương án rẻ nhất.
-            </Alert>
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+              <span>
+                {rec.bestTech === 'digital' ? 'In nhanh' : 'In offset'} rẻ hơn:{' '}
+                <strong>{formatVnd(rec.bestTech === 'digital' ? rec.digitalTotal : rec.offsetTotal)}</strong>
+              </span>
+              {onUseBestTech && (
+                <button
+                  type="button"
+                  onClick={onUseBestTech}
+                  className="shrink-0 px-2.5 py-1 rounded-md bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors"
+                >
+                  Dùng ngay
+                </button>
+              )}
+            </div>
           )}
 
           <div className="grid grid-cols-3 gap-2">
@@ -123,7 +139,7 @@ export function ResultPanel({
               {savedCode ? 'Đã lưu' : 'Lưu báo giá'}
             </Button>
             <Button icon={<FileText className="w-4 h-4" />} disabled={stale} onClick={onPrint}>
-              In / PDF
+              In phiếu
             </Button>
             <Button icon={<Copy className="w-4 h-4" />} disabled={stale} onClick={onCopy}>
               Copy Zalo
@@ -131,9 +147,9 @@ export function ResultPanel({
           </div>
 
           <dl className={cn('grid grid-cols-2 gap-2 text-xs', stale && 'opacity-60')}>
-            <Stat label="Số con / tờ in" value={`${result.imposition.upsPerPrintSheet} con`} sub={result.imposition.printSheet.name} />
+            <Stat label="Bình trang" value={`${result.imposition.upsPerPrintSheet} con/tờ`} sub={result.imposition.printSheet.name} />
             <Stat
-              label="Tờ in cần chạy"
+              label="Tờ in"
               value={`${formatNumber(q.totalPrintSheets)} tờ`}
               sub={
                 q.printWasteSheets + q.finishingWasteSheets > 0
@@ -147,8 +163,8 @@ export function ResultPanel({
               sub={`${formatNumber(q.ramsNeeded, true)} ram · ~${formatNumber(q.kgNeeded, true)} kg`}
             />
             <Stat
-              label="Máy / khổ in"
-              value={result.chosenTech === 'offset' ? `${result.printing.platesCount} kẽm · ${result.printing.passes} lần lên máy` : `${formatNumber(q.impressions)} lượt in`}
+              label="Máy in"
+              value={result.chosenTech === 'offset' ? `${result.printing.platesCount} kẽm · ${result.printing.passes} lần` : `${formatNumber(q.impressions)} lượt`}
               sub={result.printing.machineName}
             />
           </dl>
@@ -156,12 +172,12 @@ export function ResultPanel({
       </section>
 
       {/* ---------- Chi tiết ---------- */}
-      <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-3">
+      <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 sm:p-4 space-y-3">
         <Segmented
           value={tab}
           onChange={setTab}
           options={[
-            { value: 'breakdown', label: <span className="inline-flex items-center gap-1"><ListOrdered className="w-3.5 h-3.5" />Chi tiết giá</span> },
+            { value: 'breakdown', label: <span className="inline-flex items-center gap-1"><ListOrdered className="w-3.5 h-3.5" />Chi tiết</span> },
             { value: 'imposition', label: <span className="inline-flex items-center gap-1"><LayoutGrid className="w-3.5 h-3.5" />Bình trang</span> },
             { value: 'compare', label: <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" />So sánh</span> },
           ]}
@@ -204,6 +220,7 @@ function Line({ label, note, amount, strong, negative, className }: { label: Rea
 
 function Breakdown({ result }: { result: CalculationResult }) {
   const c = result.costs;
+  const showPreTax = c.vatPercent > 0 || c.discountAmount > 0;
   return (
     <div className="divide-y divide-slate-100">
       <div className="pb-2">
@@ -220,26 +237,22 @@ function Breakdown({ result }: { result: CalculationResult }) {
         ))}
       </div>
 
-      <div className="py-2">
-        <SectionLabel>3. Gia công</SectionLabel>
-        {c.finishingDetails.length === 0 ? (
-          <p className="text-xs text-slate-400 py-1">Không có</p>
-        ) : (
-          c.finishingDetails.map((f) => <Line key={f.serviceId} label={f.name} note={f.formula} amount={f.subtotal} />)
-        )}
-      </div>
+      {c.finishingDetails.length > 0 && (
+        <div className="py-2">
+          <SectionLabel>3. Gia công</SectionLabel>
+          {c.finishingDetails.map((f) => (
+            <Line key={f.serviceId} label={f.name} note={f.formula} amount={f.subtotal} />
+          ))}
+        </div>
+      )}
 
       <div className="pt-2">
-        <Line label="Tổng chi phí sản xuất" amount={c.totalBaseCost} strong />
-        <Line label={`Lợi nhuận ${formatNumber(c.profitMarginPercent, true)}%`} amount={c.profitAmount} />
+        <Line label="Giá vốn sản xuất" amount={c.totalBaseCost} strong />
+        <Line label={`Lợi nhuận (${formatNumber(c.profitMarginPercent, true)}%)`} amount={c.profitAmount} />
         {c.discountAmount > 0 && <Line label="Giảm giá" amount={c.discountAmount} negative />}
-        <Line label="Tạm tính (chưa VAT)" amount={c.preTaxTotal} />
-        {c.vatPercent > 0 && <Line label={`VAT ${formatNumber(c.vatPercent, true)}%`} amount={c.vatAmount} />}
+        {showPreTax && <Line label="Tạm tính" amount={c.preTaxTotal} />}
+        {c.vatPercent > 0 && <Line label={`VAT (${formatNumber(c.vatPercent, true)}%)`} amount={c.vatAmount} />}
         <Line label="Tổng thanh toán" amount={c.finalPrice} strong className="border-t border-slate-200 mt-1 pt-2" />
-      </div>
-
-      <div className="pt-2">
-        <Badge tone="slate">Giá vốn / sp: {formatVnd(result.quantities.productQty ? c.totalBaseCost / result.quantities.productQty : 0)}</Badge>
       </div>
     </div>
   );

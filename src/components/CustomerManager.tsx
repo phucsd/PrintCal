@@ -381,36 +381,30 @@ export function CustomerManager() {
     <div className="space-y-4">
       <PageHeader
         title="Khách hàng"
-        description="Danh bạ khách hàng, lịch sử đơn hàng và doanh thu theo từng khách."
+        description={data ? `${formatNumber(customers.length)} khách hàng` : undefined}
         actions={
           <>
-            <Button icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
-              Tải lại
+            <Button size="sm" icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
+              <span className="hidden sm:inline">Tải lại</span>
             </Button>
-            <Button variant="primary" icon={<UserPlus className="w-4 h-4" />} onClick={() => openEditor(null, EMPTY_FORM)}>
-              Thêm khách hàng
+            <Button size="sm" variant="primary" icon={<UserPlus className="w-4 h-4" />} onClick={() => openEditor(null, EMPTY_FORM)}>
+              Thêm khách
             </Button>
           </>
         }
       />
 
-      <Card bodyClassName="p-3 sm:p-4">
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <TextInput
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm theo tên, công ty, số điện thoại, email…"
-            className="pl-8"
-            aria-label="Tìm khách hàng"
-          />
-        </div>
-        {data && (
-          <p className="text-xs text-slate-500 mt-2">
-            {searching || loading ? 'Đang tìm…' : q ? `Tìm thấy ${formatNumber(customers.length)} khách hàng cho “${q}”` : `${formatNumber(customers.length)} khách hàng`}
-          </p>
-        )}
-      </Card>
+      <div className="relative">
+        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <TextInput
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm tên, công ty, SĐT, email…"
+          className="pl-9 bg-white"
+          aria-label="Tìm khách hàng"
+        />
+        {searching && <span className="text-[11px] text-slate-400 absolute right-3 top-1/2 -translate-y-1/2">Đang tìm…</span>}
+      </div>
 
       {error && (
         <Alert tone="error" title="Không tải được danh sách khách hàng">
@@ -497,35 +491,37 @@ export function CustomerManager() {
                     setDetailId(c.id);
                   }
                 }}
-                className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 text-left hover:border-blue-300 transition-colors focus-visible:outline-2 focus-visible:outline-blue-500"
+                className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 text-left hover:border-blue-300 transition-colors focus-visible:outline-2 focus-visible:outline-blue-500"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="font-semibold text-slate-900 truncate">{c.name}</p>
+                    <p className="font-semibold text-sm text-slate-900 truncate">{c.name}</p>
                     {c.company && <p className="text-xs text-slate-500 truncate">{c.company}</p>}
                   </div>
                   {rowActions(c)}
                 </div>
-                <div className="mt-2 space-y-1 text-xs text-slate-600">
-                  {c.phone && (
-                    <p className="flex items-center gap-1.5">
-                      <Phone className="w-3.5 h-3.5 text-slate-400" /> {c.phone}
-                    </p>
-                  )}
-                  {c.email && (
-                    <p className="flex items-center gap-1.5 break-all">
-                      <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" /> {c.email}
-                    </p>
-                  )}
-                  {c.address && (
-                    <p className="flex items-start gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" /> {c.address}
-                    </p>
-                  )}
-                </div>
-                <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                {(c.phone || c.email || c.address) && (
+                  <div className="mt-1.5 space-y-1 text-xs text-slate-600">
+                    {c.phone && (
+                      <p className="flex items-center gap-1.5">
+                        <Phone className="w-3.5 h-3.5 text-slate-400" /> {c.phone}
+                      </p>
+                    )}
+                    {c.email && (
+                      <p className="flex items-center gap-1.5 break-all">
+                        <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" /> {c.email}
+                      </p>
+                    )}
+                    {c.address && (
+                      <p className="flex items-start gap-1.5 line-clamp-1">
+                        <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" /> {c.address}
+                      </p>
+                    )}
+                  </div>
+                )}
+                <div className="mt-2.5 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
                   <span className="text-slate-500">
-                    {formatNumber(c.orderCount)} đơn · tạo {formatDateTime(c.createdAt, false)}
+                    {formatNumber(c.orderCount)} đơn · {formatDateTime(c.createdAt, false)}
                   </span>
                   <span className="font-bold text-slate-900 tabular-nums">{formatVnd(c.totalRevenue)}</span>
                 </div>

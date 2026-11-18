@@ -91,16 +91,16 @@ export function ImpositionVisualizer({
               })}
             </svg>
           </div>
-          <figcaption className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
-            <Legend color="#dbeafe" border="#2563eb">Thành phẩm {productWidthMm}×{productHeightMm}</Legend>
+          <figcaption className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+            <Legend color="#dbeafe" border="#2563eb">{productWidthMm}×{productHeightMm}mm</Legend>
             {im.boxes.some((b) => b.isRotated) && (
               <Legend color="#e0e7ff" border="#2563eb">
                 <RotateCw className="w-3 h-3 inline" /> Xoay 90°
               </Legend>
             )}
-            {im.bleedMm > 0 && <Legend color="#fecdd3">Tràn lề {im.bleedMm}mm</Legend>}
-            {im.gripperMarginMm > 3 && <Legend color="#fde68a">Lề nhíp</Legend>}
-            <span>{im.gapMm > 0 ? `Cách con ${im.gapMm}mm (sản phẩm bế)` : 'Xén chung dao'}</span>
+            {im.bleedMm > 0 && <Legend color="#fecdd3">Tràn {im.bleedMm}mm</Legend>}
+            {im.gripperMarginMm > 3 && <Legend color="#fde68a">Nhíp</Legend>}
+            <span>{im.gapMm > 0 ? `Cách ${im.gapMm}mm` : 'Xén chung'}</span>
           </figcaption>
         </figure>
       ) : (

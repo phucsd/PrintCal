@@ -213,7 +213,7 @@ export function PaperManager() {
   };
 
   const addButton = (
-    <Button variant="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setEditor({ id: null, form: EMPTY_FORM })}>
+    <Button size="sm" variant="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setEditor({ id: null, form: EMPTY_FORM })}>
       Thêm giấy
     </Button>
   );
@@ -221,16 +221,12 @@ export function PaperManager() {
   return (
     <div>
       <PageHeader
-        title="Kho giá giấy"
-        description={
-          data
-            ? `${formatNumber(papers.length)} loại giấy · ${formatNumber(activeCount)} đang dùng · giá tính theo ram 500 tờ khổ mẹ`
-            : 'Bảng giá giấy theo ram (500 tờ khổ mẹ)'
-        }
+        title="Kho giấy"
+        description={data ? `${formatNumber(papers.length)} loại · ${formatNumber(activeCount)} đang dùng` : undefined}
         actions={
           <>
-            <Button icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
-              Tải lại
+            <Button size="sm" icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
+              <span className="hidden sm:inline">Tải lại</span>
             </Button>
             {addButton}
           </>
@@ -238,52 +234,59 @@ export function PaperManager() {
       />
 
       <Card bodyClassName="p-0">
-        {/* Bộ lọc */}
-        <div className="p-4 border-b border-slate-100 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_auto] items-end">
-          <Field label="Tìm kiếm">
-            <div className="relative">
+        {/* Bộ lọc gọn */}
+        <div className="p-3 sm:p-4 border-b border-slate-100 space-y-2.5">
+          <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
+            <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <TextInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Mã, tên, mô tả, định lượng…"
+                placeholder="Tìm mã, tên, định lượng…"
                 className="pl-8"
                 aria-label="Tìm kiếm giấy"
               />
             </div>
-          </Field>
-          <Field label="Nhóm giấy">
-            <Select value={group} onChange={(e) => setGroup(e.target.value)} aria-label="Lọc theo nhóm giấy">
-              <option value="all">Tất cả nhóm</option>
-              {GROUPS.map((g) => (
-                <option key={g.value} value={g.value}>
+            <div className="grid grid-cols-2 sm:flex gap-2 items-center">
+              <Select value={supplier} onChange={(e) => setSupplier(e.target.value)} aria-label="Lọc theo nhà cung cấp" className="sm:w-36">
+                <option value="all">Tất cả NCC</option>
+                {suppliers.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+              <Select value={size} onChange={(e) => setSize(e.target.value)} aria-label="Lọc theo khổ mẹ" className="sm:w-36">
+                <option value="all">Tất cả khổ</option>
+                {sizes.map((s) => (
+                  <option key={s.key} value={s.key}>
+                    {s.key} ({s.count})
+                  </option>
+                ))}
+              </Select>
+              <div className="col-span-2 sm:col-span-1 shrink-0">
+                <Checkbox checked={showInactive} onChange={setShowInactive} label="Đã ẩn" />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+            {[{ value: 'all', label: 'Tất cả' }, ...GROUPS].map((g) => {
+              const active = group === g.value;
+              return (
+                <button
+                  key={g.value}
+                  type="button"
+                  onClick={() => setGroup(g.value)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-full text-xs font-medium border whitespace-nowrap transition-colors',
+                    active ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
                   {g.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Nhà cung cấp">
-            <Select value={supplier} onChange={(e) => setSupplier(e.target.value)} aria-label="Lọc theo nhà cung cấp">
-              <option value="all">Tất cả NCC</option>
-              {suppliers.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Khổ mẹ (cm)">
-            <Select value={size} onChange={(e) => setSize(e.target.value)} aria-label="Lọc theo khổ mẹ">
-              <option value="all">Tất cả khổ</option>
-              {sizes.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.key} ({s.count})
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <div className="pb-2">
-            <Checkbox checked={showInactive} onChange={setShowInactive} label="Hiện giấy đã ẩn" />
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -304,73 +307,113 @@ export function PaperManager() {
           <EmptyState
             icon={<Layers className="w-10 h-10" />}
             title={papers.length === 0 ? 'Chưa có loại giấy nào' : 'Không có giấy phù hợp bộ lọc'}
-            description={papers.length === 0 ? 'Thêm loại giấy đầu tiên để bắt đầu tính giá.' : 'Thử bỏ bớt điều kiện lọc hoặc bật "Hiện giấy đã ẩn".'}
+            description={papers.length === 0 ? 'Thêm loại giấy đầu tiên để bắt đầu tính giá.' : 'Thử bỏ bớt điều kiện lọc hoặc bật "Đã ẩn".'}
             action={papers.length === 0 ? addButton : hasFilter ? <Button onClick={resetFilters}>Xoá bộ lọc</Button> : undefined}
           />
         ) : data ? (
           <>
-            <Table>
-              <thead>
-                <tr>
-                  <th className={th}>Mã</th>
-                  <th className={th}>Tên giấy</th>
-                  <th className={cn(th, 'text-right')}>gsm</th>
-                  <th className={cn(th, 'text-center')}>Khổ mẹ (cm)</th>
-                  <th className={cn(th, 'text-right')}>Giá ≥500 tờ /ram</th>
-                  <th className={cn(th, 'text-right')}>Giá &lt;500 tờ /ram</th>
-                  <th className={cn(th, 'text-right')}>Giá/tờ</th>
-                  <th className={th}>NCC</th>
-                  <th className={cn(th, 'text-center')}>Trạng thái</th>
-                  <th className={cn(th, 'text-right')}>Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((p) => {
-                  const busy = busyId === p.id;
-                  return (
-                    <tr key={p.id} className={cn('hover:bg-slate-50/70', !p.isActive && 'opacity-60')}>
-                      <td className={cn(td, 'whitespace-nowrap')}>
-                        <Badge tone={GROUP_TONES[groupOf(p.code)]} className="font-mono">
+            {/* Bảng trên màn hình lớn */}
+            <div className="hidden md:block">
+              <Table>
+                <thead>
+                  <tr>
+                    <th className={th}>Mã</th>
+                    <th className={th}>Tên giấy</th>
+                    <th className={cn(th, 'text-right')}>gsm</th>
+                    <th className={cn(th, 'text-center')}>Khổ mẹ (cm)</th>
+                    <th className={cn(th, 'text-right')}>≥500 tờ/ram</th>
+                    <th className={cn(th, 'text-right')}>&lt;500 tờ/ram</th>
+                    <th className={cn(th, 'text-right')}>Giá/tờ</th>
+                    <th className={th}>NCC</th>
+                    <th className={cn(th, 'text-right')}>Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((p) => {
+                    const busy = busyId === p.id;
+                    return (
+                      <tr key={p.id} className={cn('hover:bg-slate-50/70', !p.isActive && 'opacity-60')}>
+                        <td className={cn(td, 'whitespace-nowrap')}>
+                          <Badge tone={GROUP_TONES[groupOf(p.code)]} className="font-mono">
+                            {p.code}
+                          </Badge>
+                        </td>
+                        <td className={cn(td, 'min-w-48')}>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-slate-900">{p.name}</span>
+                            {!p.isActive && <Badge tone="slate">Ẩn</Badge>}
+                          </div>
+                          {p.description && <div className="text-xs text-slate-500 line-clamp-1">{p.description}</div>}
+                        </td>
+                        <td className={cn(td, 'text-right tabular-nums')}>{p.gsm}</td>
+                        <td className={cn(td, 'text-center tabular-nums whitespace-nowrap')}>{sizeKey(p)}</td>
+                        <td className={cn(td, 'text-right tabular-nums whitespace-nowrap font-medium text-slate-900')}>{formatVnd(p.priceAbove500)}</td>
+                        <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>{formatVnd(p.priceBelow500)}</td>
+                        <td className={cn(td, 'text-right tabular-nums whitespace-nowrap text-slate-600')}>{formatVnd(p.priceAbove500 / 500)}</td>
+                        <td className={cn(td, 'whitespace-nowrap text-slate-600')}>{p.supplier || DEFAULT_SUPPLIER}</td>
+                        <td className={cn(td, 'text-right whitespace-nowrap')}>
+                          <div className="inline-flex items-center gap-0.5">
+                            <IconButton label="Sửa" disabled={busy} onClick={() => setEditor({ id: p.id, form: toForm(p) })}>
+                              <Pencil className="w-4 h-4" />
+                            </IconButton>
+                            <IconButton label={p.isActive ? 'Ẩn (ngừng dùng)' : 'Kích hoạt lại'} disabled={busy} onClick={() => toggleActive(p)}>
+                              {p.isActive ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </IconButton>
+                            <IconButton label="Xoá" tone="danger" disabled={busy} onClick={() => remove(p)}>
+                              <Trash2 className="w-4 h-4" />
+                            </IconButton>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </div>
+
+            {/* Danh sách thẻ trên điện thoại */}
+            <div className="md:hidden divide-y divide-slate-100">
+              {filtered.map((p) => {
+                const busy = busyId === p.id;
+                return (
+                  <div key={p.id} className={cn('p-3.5 space-y-1.5', !p.isActive && 'opacity-60')}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Badge tone={GROUP_TONES[groupOf(p.code)]} className="font-mono shrink-0">
                           {p.code}
                         </Badge>
-                      </td>
-                      <td className={cn(td, 'min-w-48')}>
-                        <div className="font-medium text-slate-900">{p.name}</div>
-                        {p.description && <div className="text-xs text-slate-500 line-clamp-1">{p.description}</div>}
-                      </td>
-                      <td className={cn(td, 'text-right tabular-nums')}>{p.gsm}</td>
-                      <td className={cn(td, 'text-center tabular-nums whitespace-nowrap')}>{sizeKey(p)}</td>
-                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap font-medium text-slate-900')}>{formatVnd(p.priceAbove500)}</td>
-                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>{formatVnd(p.priceBelow500)}</td>
-                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap text-slate-600')}>{formatVnd(p.priceAbove500 / 500)}</td>
-                      <td className={cn(td, 'whitespace-nowrap text-slate-600')}>{p.supplier || DEFAULT_SUPPLIER}</td>
-                      <td className={cn(td, 'text-center')}>
-                        {p.isActive ? <Badge tone="green">Đang dùng</Badge> : <Badge tone="slate">Đã ẩn</Badge>}
-                      </td>
-                      <td className={cn(td, 'text-right whitespace-nowrap')}>
-                        <div className="inline-flex items-center gap-0.5">
-                          <IconButton label="Sửa" disabled={busy} onClick={() => setEditor({ id: p.id, form: toForm(p) })}>
-                            <Pencil className="w-4 h-4" />
-                          </IconButton>
-                          <IconButton label={p.isActive ? 'Ẩn (ngừng dùng)' : 'Kích hoạt lại'} disabled={busy} onClick={() => toggleActive(p)}>
-                            {p.isActive ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                          </IconButton>
-                          <IconButton label="Xoá" tone="danger" disabled={busy} onClick={() => remove(p)}>
-                            <Trash2 className="w-4 h-4" />
-                          </IconButton>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </Table>
-            <div className="px-4 py-2.5 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-sm text-slate-900 truncate">{p.name}</span>
+                        {!p.isActive && <Badge tone="slate">Ẩn</Badge>}
+                      </div>
+                      <span className="font-bold text-sm text-slate-900 tabular-nums shrink-0">{formatVnd(p.priceAbove500)}/ram</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs text-slate-500 truncate">
+                        {p.gsm}gsm · {sizeKey(p)}cm · {p.supplier || DEFAULT_SUPPLIER} · {formatVnd(p.priceAbove500 / 500)}/tờ
+                      </p>
+                      <div className="inline-flex items-center gap-0.5 shrink-0">
+                        <IconButton label="Sửa" disabled={busy} onClick={() => setEditor({ id: p.id, form: toForm(p) })}>
+                          <Pencil className="w-4 h-4" />
+                        </IconButton>
+                        <IconButton label={p.isActive ? 'Ẩn' : 'Kích hoạt'} disabled={busy} onClick={() => toggleActive(p)}>
+                          {p.isActive ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </IconButton>
+                        <IconButton label="Xoá" tone="danger" disabled={busy} onClick={() => remove(p)}>
+                          <Trash2 className="w-4 h-4" />
+                        </IconButton>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-4 py-2 text-xs text-slate-500 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
               <span>
-                Hiển thị {formatNumber(filtered.length)} / {formatNumber(papers.length)} loại giấy
+                {formatNumber(filtered.length)} / {formatNumber(papers.length)} loại giấy
                 {loading && ' · đang cập nhật…'}
               </span>
-              <span>Giá/tờ = giá ram (≥ 500 tờ) ÷ 500 · tính trên tờ khổ mẹ</span>
+              <span className="hidden sm:inline">Giá/tờ = giá ram (≥500 tờ) ÷ 500</span>
             </div>
           </>
         ) : null}

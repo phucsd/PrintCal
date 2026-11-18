@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Check, Search } from 'lucide-react';
 import type { PaperType } from '@/types';
 import { formatVnd } from '@/lib/format';
-import { Badge, Checkbox, Modal, Segmented, Select, TextInput, cn } from './ui';
+import { Badge, Checkbox, Modal, Select, TextInput, cn } from './ui';
 
 export const PAPER_GROUPS: { key: string; label: string }[] = [
   { key: 'all', label: 'Tất cả' },
@@ -65,10 +65,27 @@ export function PaperSelectorModal({
       <div className="p-4 space-y-3 border-b border-slate-100 sticky top-0 bg-white z-10">
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <TextInput autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm theo mã, tên, định lượng (vd: couche 150, I300, 79x109)…" className="pl-8" />
+          <TextInput autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm mã, tên, định lượng (VD: C150, 79x109)…" className="pl-8" />
         </div>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-          <Segmented size="sm" value={group} onChange={setGroup} options={PAPER_GROUPS.map((g) => ({ value: g.key, label: g.label }))} className="sm:flex-1" />
+          <div className="flex gap-1 overflow-x-auto no-scrollbar sm:flex-1">
+            {PAPER_GROUPS.map((g) => {
+              const active = group === g.key;
+              return (
+                <button
+                  key={g.key}
+                  type="button"
+                  onClick={() => setGroup(g.key)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-full text-xs font-medium border whitespace-nowrap transition-colors',
+                    active ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  {g.label}
+                </button>
+              );
+            })}
+          </div>
           <Select value={size} onChange={(e) => setSize(e.target.value)} className="sm:w-36 py-1.5 text-xs">
             <option value="all">Mọi khổ mẹ</option>
             {sizes.map((s) => (

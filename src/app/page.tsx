@@ -62,7 +62,7 @@ function App() {
     <div className="min-h-screen flex flex-col">
       <Navbar activeTab={tab} onChange={changeTab} orderCount={master.data?.orderCount} companyName={master.data?.settings.companyName} />
 
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-5">
+      <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 py-3 sm:py-5 pb-20 md:pb-6">
         {!master.data ? (
           master.error ? (
             <Alert tone="error" title="Không tải được dữ liệu">
@@ -102,7 +102,7 @@ function App() {
         )}
       </main>
 
-      <footer className="text-center text-[11px] text-slate-400 py-4 print:hidden">
+      <footer className="hidden md:block text-center text-[11px] text-slate-400 py-4 print:hidden">
         PrintCal · Tính giá in offset & in nhanh
       </footer>
     </div>

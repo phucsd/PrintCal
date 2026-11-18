@@ -202,40 +202,39 @@ export function OrdersManager({
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Đơn hàng & báo giá"
-        description="Quản lý báo giá, theo dõi tiến độ sản xuất xưởng in và xuất phiếu in A4."
+        title="Đơn hàng"
         actions={
-          <Button icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
+          <Button size="sm" icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
             Tải lại
           </Button>
         }
       />
 
       {/* Thẻ chỉ số nhanh */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         <KpiCard
           icon={<ClipboardList className="w-4 h-4 text-blue-600" />}
-          label="Tổng đơn & báo giá"
+          label="Tổng đơn"
           value={formatNumber(orders.length)}
-          sub={`${formatNumber(stats.counts.quote ?? 0)} đang chờ duyệt`}
+          sub={`${formatNumber(stats.counts.quote ?? 0)} chờ duyệt`}
         />
         <KpiCard
           icon={<Wrench className="w-4 h-4 text-amber-600" />}
           label="Đang sản xuất"
           value={formatNumber(stats.inProduction)}
-          sub={`In: ${stats.counts.printing ?? 0} · Gia công: ${stats.counts.finishing ?? 0}`}
+          sub={`In: ${stats.counts.printing ?? 0} · GC: ${stats.counts.finishing ?? 0}`}
         />
         <KpiCard
           icon={<CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-          label="Hoàn thành / Đã giao"
+          label="Hoàn thành"
           value={formatNumber(stats.doneCount)}
           sub={`Đã giao: ${formatNumber(stats.counts.delivered ?? 0)} đơn`}
         />
         <KpiCard
           icon={<TrendingUp className="w-4 h-4 text-indigo-600" />}
-          label="Doanh thu đơn chốt"
+          label="Doanh thu chốt"
           value={formatVndShort(stats.confirmedRevenue)}
-          sub={`Lãi gộp ước tính: ${formatVndShort(stats.confirmedProfit)}`}
+          sub={`Lãi gộp: ${formatVndShort(stats.confirmedProfit)}`}
         />
       </div>
 
@@ -429,46 +428,66 @@ export function OrdersManager({
             <div className="md:hidden divide-y divide-slate-100">
               {filtered.map((o) => {
                 const busy = busyId === o.id;
+                const next = nextStatusOf(o.status);
                 const unit = PRODUCT_UNITS[o.productType] ?? 'sp';
                 return (
-                  <div key={o.id} className="p-4 space-y-2.5">
+                  <div key={o.id} className="p-3.5 space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <button type="button" onClick={() => setDetailId(o.id)} className="font-bold text-blue-600 hover:underline">
-                          {o.code}
-                        </button>
-                        <p className="text-sm font-semibold text-slate-900">{o.jobName}</p>
-                        <p className="text-xs text-slate-500">
-                          {o.customerName} {o.customerPhone ? `· ${o.customerPhone}` : ''} · {formatDateTime(o.createdAt, false)}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <button type="button" onClick={() => setDetailId(o.id)} className="font-bold text-sm text-blue-600 hover:underline">
+                            {o.code}
+                          </button>
+                          <span className="text-[11px] text-slate-400">{formatDateTime(o.createdAt, false)}</span>
+                        </div>
+                        <p className="text-sm font-semibold text-slate-900 truncate">{o.jobName}</p>
+                        <p className="text-xs text-slate-500 truncate">
+                          {o.customerName} {o.customerPhone ? `· ${o.customerPhone}` : ''}
                         </p>
                       </div>
                       <Badge tone={STATUS_TONES[o.status]}>{ORDER_STATUS_LABELS[o.status]}</Badge>
                     </div>
-                    <div className="flex items-center justify-between text-xs text-slate-600">
-                      <span>
+                    <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
+                      <span className="truncate">
                         {o.widthMm}×{o.heightMm}mm · {formatNumber(o.quantity)} {unit} · {o.printTech === 'offset' ? 'Offset' : 'In nhanh'}
                       </span>
-                      <strong className="text-sm text-slate-900 tabular-nums">{formatVnd(o.finalPrice)}</strong>
+                      <strong className="text-sm text-slate-900 tabular-nums shrink-0">{formatVnd(o.finalPrice)}</strong>
                     </div>
-                    <div className="flex items-center justify-between gap-2 pt-1">
-                      <Select
-                        value={o.status}
-                        disabled={busy}
-                        onChange={(e) => changeStatus(o, e.target.value as OrderStatus)}
-                        className="py-1 px-2 text-xs flex-1"
-                      >
-                        {ORDER_STATUSES.map((st) => (
-                          <option key={st} value={st}>
-                            {ORDER_STATUS_LABELS[st]}
-                          </option>
-                        ))}
-                      </Select>
-                      <div className="inline-flex items-center gap-0.5">
+                    <div className="flex items-center justify-between gap-2 pt-0.5">
+                      {next ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => changeStatus(o, next)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40"
+                        >
+                          {NEXT_ACTION_LABELS[o.status]}
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <Select
+                          value={o.status}
+                          disabled={busy}
+                          onChange={(e) => changeStatus(o, e.target.value as OrderStatus)}
+                          aria-label={`Trạng thái ${o.code}`}
+                          className="py-1 px-2 text-xs w-36"
+                        >
+                          {ORDER_STATUSES.map((st) => (
+                            <option key={st} value={st}>
+                              {ORDER_STATUS_LABELS[st]}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
+                      <div className="inline-flex items-center gap-0.5 shrink-0">
                         <IconButton label="Chi tiết" disabled={busy} onClick={() => setDetailId(o.id)}>
                           <Eye className="w-4 h-4" />
                         </IconButton>
                         <IconButton label="In phiếu" disabled={busy} onClick={() => handlePrint(o)}>
                           <Printer className="w-4 h-4" />
+                        </IconButton>
+                        <IconButton label="Copy Zalo" disabled={busy} onClick={() => handleCopyZalo(o)}>
+                          <Copy className="w-4 h-4" />
                         </IconButton>
                         <IconButton label="Mở lại máy tính" disabled={busy} onClick={() => handleReopen(o)}>
                           <Calculator className="w-4 h-4" />
@@ -553,12 +572,12 @@ export function OrdersManager({
 
 function KpiCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: string; sub: string }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+    <div className="bg-white rounded-2xl border border-slate-200 p-3 shadow-xs">
       <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
-        <span>{label}</span>
+        <span className="truncate">{label}</span>
         {icon}
       </div>
-      <p className="text-xl font-black text-slate-900 mt-1 tabular-nums">{value}</p>
+      <p className="text-lg sm:text-xl font-black text-slate-900 mt-0.5 tabular-nums">{value}</p>
       <p className="text-[11px] text-slate-500 mt-0.5 truncate">{sub}</p>
     </div>
   );
@@ -690,14 +709,14 @@ function OrderDetailBody({
   return (
     <div className="space-y-5">
       {/* Thanh tiến độ 6 bước */}
-      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-2">
-        <div className="flex items-center justify-between text-xs">
-          <span className="font-semibold text-slate-700">Tiến độ sản xuất (bấm bước bất kỳ để chuyển nhanh)</span>
-          <span className="text-slate-400">Cập nhật: {formatDateTime(order.updatedAt)}</span>
+      <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="font-semibold text-slate-700">Tiến độ sản xuất</span>
+          <span className="text-slate-400">{formatDateTime(order.updatedAt)}</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-6 gap-1.5">
-          {ORDER_STATUS_FLOW.map((step, idx) => {
-            const done = flowIndex >= 0 && idx <= flowIndex;
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+          {ORDER_STATUS_FLOW.map((step) => {
+            const done = flowIndex >= 0 && ORDER_STATUS_FLOW.indexOf(step) <= flowIndex;
             const current = status === step;
             return (
               <button
@@ -709,7 +728,7 @@ function OrderDetailBody({
                   save(step);
                 }}
                 className={cn(
-                  'px-2.5 py-2 rounded-lg text-xs font-semibold border text-left transition-all',
+                  'shrink-0 sm:flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold border whitespace-nowrap transition-all',
                   current
                     ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
                     : done
@@ -717,13 +736,12 @@ function OrderDetailBody({
                       : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
                 )}
               >
-                <span className="block text-[10px] opacity-75">Bước {idx + 1}</span>
                 {ORDER_STATUS_LABELS[step]}
               </button>
             );
           })}
         </div>
-        {status === 'cancelled' && <Alert tone="error">Đơn hàng này đang ở trạng thái Đã huỷ.</Alert>}
+        {status === 'cancelled' && <Alert tone="error">Đơn hàng đang ở trạng thái Đã huỷ.</Alert>}
       </div>
 
       {errors.length > 0 && (

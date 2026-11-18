@@ -209,8 +209,8 @@ function SettingsForm({ initial, onSaved }: { initial: SystemSetting; onSaved: (
         </Card>
 
         <Card title="Mặc định khi tính giá" icon={<Percent className="w-4 h-4 text-blue-600" />}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Lợi nhuận mặc định" htmlFor="set-margin" hint="Cộng trên tổng giá vốn. Có thể đặt 0%.">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Lợi nhuận mặc định" htmlFor="set-margin">
               <NumberInput
                 id="set-margin"
                 value={form.defaultProfitMargin}
@@ -221,7 +221,7 @@ function SettingsForm({ initial, onSaved }: { initial: SystemSetting; onSaved: (
                 suffix="%"
               />
             </Field>
-            <Field label="VAT mặc định" htmlFor="set-vat" hint="Đặt 0% nếu không xuất hoá đơn VAT.">
+            <Field label="VAT mặc định" htmlFor="set-vat">
               <NumberInput
                 id="set-vat"
                 value={form.defaultVatPercent}
@@ -235,21 +235,32 @@ function SettingsForm({ initial, onSaved }: { initial: SystemSetting; onSaved: (
           </div>
         </Card>
 
-        <div className="sticky bottom-3 z-10">
-          <div className="flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white/95 backdrop-blur px-4 py-3 shadow-lg">
-            <p className="mr-auto text-xs text-slate-500">{dirty ? 'Có thay đổi chưa lưu.' : 'Mọi thay đổi đã được lưu.'}</p>
-            <Button icon={<RotateCcw className="w-4 h-4" />} onClick={reset} disabled={!dirty || saving}>
+        <div className="sticky bottom-16 md:bottom-3 z-10">
+          <div className="flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white/95 backdrop-blur px-3.5 py-2.5 shadow-lg">
+            <p className="mr-auto text-xs text-slate-500">{dirty ? 'Chưa lưu thay đổi' : 'Đã lưu'}</p>
+            <Button size="sm" icon={<RotateCcw className="w-3.5 h-3.5" />} onClick={reset} disabled={!dirty || saving}>
               Hoàn tác
             </Button>
-            <Button type="submit" variant="primary" icon={<Save className="w-4 h-4" />} loading={saving} disabled={!dirty}>
-              Lưu cài đặt
+            <Button size="sm" type="submit" variant="primary" icon={<Save className="w-3.5 h-3.5" />} loading={saving} disabled={!dirty}>
+              Lưu
             </Button>
           </div>
         </div>
       </div>
 
       <div className="lg:sticky lg:top-4 min-w-0">
-        <QuotePreview s={form} />
+        <div className="hidden lg:block">
+          <QuotePreview s={form} />
+        </div>
+        <details className="lg:hidden bg-white rounded-2xl border border-slate-200 shadow-xs">
+          <summary className="px-4 py-3 text-sm font-semibold text-slate-900 cursor-pointer flex items-center gap-2 select-none">
+            <Eye className="w-4 h-4 text-blue-600" />
+            Xem trước mẫu báo giá
+          </summary>
+          <div className="px-4 pb-4">
+            <QuotePreview s={form} />
+          </div>
+        </details>
       </div>
     </form>
   );
@@ -264,7 +275,7 @@ export function SettingsManager() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Cài đặt" description="Thông tin hiển thị trên báo giá và các giá trị mặc định khi tính giá." />
+      <PageHeader title="Cài đặt" description="Thông tin hiển thị trên phiếu báo giá và giá trị mặc định." />
 
       {error && (
         <Alert tone="error" title="Không tải được cài đặt">

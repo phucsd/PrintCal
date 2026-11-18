@@ -22,6 +22,10 @@ body {
   display: none;
 }
 
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* ------------------------------------------------------------------
    In ấn: chỉ in nội dung trong #print-root (phiếu báo giá / lệnh SX)
    ------------------------------------------------------------------ */
