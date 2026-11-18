@@ -1,721 +1,305 @@
-import { BoxCoordinate, DigitalMode, ImpositionResult, PaperCutBlock, PaperCutLine, PaperCutScheme, PaperType, PrintTech } from '@/types';
+// =============================================================================
+// BÌNH TRANG & SƠ ĐỒ CẮT GIẤY
+// -----------------------------------------------------------------------------
+// Module thuần (không phụ thuộc Next/DB) để có thể chạy unit test bằng node:test.
+// Quy ước toạ độ tờ in: chiều dài (W) nằm ngang, chiều ngắn (H) dọc,
+// lề nhíp nằm ở mép dưới (y = H - gripper … H).
+// =============================================================================
 
-interface ImpositionOptions {
-  widthMm: number;
-  heightMm: number;
-  bleedMm?: number;
-  paperType: PaperType;
-  printTech: PrintTech;
-  digitalMode?: DigitalMode;
-  preferredMachineSheet?: { widthMm: number; heightMm: number; name: string };
-  gripperMarginMm?: number;
-}
+import type { BoxCoordinate, PaperCutBlock, PaperCutLine, PaperCutScheme } from '@/types';
 
-interface EvaluationCandidate {
-  name: string;
-  sheetWidthMm: number;
-  sheetHeightMm: number;
-  cutsFromParent: number;
-  cutScheme: PaperCutScheme;
-  gripperMarginMm: number;
-}
-
-export function calculateImposition({
-  widthMm,
-  heightMm,
-  bleedMm = 2,
-  paperType,
-  printTech,
-  digitalMode = 'with_paper',
-  preferredMachineSheet,
-  gripperMarginMm = 10,
-}: ImpositionOptions): ImpositionResult {
-  const parentW = paperType.parentWidthCm * 10;
-  const parentH = paperType.parentHeightCm * 10;
-
-  // 1. Sinh danh sách các phương án cắt xả giấy mẹ
-  const candidates: EvaluationCandidate[] = [];
-
-  if (preferredMachineSheet) {
-    // Máy in cụ thể được chỉ định
-    const cuts = calculateCutsFromParent(parentW, parentH, preferredMachineSheet.widthMm, preferredMachineSheet.heightMm);
-    const cutScheme = determineCutScheme(parentW, parentH, preferredMachineSheet.widthMm, preferredMachineSheet.heightMm, cuts);
-    candidates.push({
-      name: preferredMachineSheet.name,
-      sheetWidthMm: preferredMachineSheet.widthMm,
-      sheetHeightMm: preferredMachineSheet.heightMm,
-      cutsFromParent: cuts,
-      cutScheme,
-      gripperMarginMm,
-    });
-  } else if (printTech === 'digital') {
-    // In nhanh KTS: Theo chuẩn Bảng Giá In Nhanh Kèm Giấy & In Gia Công Konica C12000
-    let digitalCandidates: { name: string; w: number; h: number; cuts: number }[] = [];
-
-    if (digitalMode === 'with_paper') {
-      // BẢNG GIÁ IN NHANH KÈM GIẤY: Khổ 325 x 430 mm (chính) & 325 x 355 mm (Fort)
-      digitalCandidates = [
-        { name: 'Khổ in kèm giấy (325 x 430 mm)', w: 430, h: 325, cuts: 1 },
-        { name: 'Khổ in kèm giấy (325 x 355 mm)', w: 355, h: 325, cuts: 1 },
-      ];
-    } else {
-      // BẢNG GIÁ IN GIA CÔNG KONICA C12000 / C12010S: 5 khổ in máy
-      digitalCandidates = [
-        { name: 'Khổ Konica A4 chuẩn (210 x 297 mm)', w: 297, h: 210, cuts: 1 },
-        { name: 'Khổ Konica 330 x 355 mm', w: 355, h: 330, cuts: 1 },
-        { name: 'Khổ Konica A3 chuẩn (297 x 420 mm)', w: 420, h: 297, cuts: 1 },
-        { name: 'Khổ Konica A3+ (330 x 483 mm)', w: 483, h: 330, cuts: 1 },
-        { name: 'Khổ Konica Banner (330 x 1200 mm)', w: 1200, h: 330, cuts: 1 },
-      ];
-    }
-
-    for (const dc of digitalCandidates) {
-      const isWithPaper = digitalMode === 'with_paper';
-      const cutScheme: PaperCutScheme = isWithPaper
-        ? {
-            parentWidthMm: dc.w,
-            parentHeightMm: dc.h,
-            cutType: 'chia_1',
-            cutDescription: 'Phôi giấy cắt sẵn khổ chuẩn của xưởng INTC (đã gồm trong đơn giá in, không cần xả từ khổ mẹ)',
-            cutsCount: 1,
-            cutSheetWidthMm: dc.w,
-            cutSheetHeightMm: dc.h,
-            wasteAreaPercent: 0,
-            cutLines: [],
-            blocks: [
-              {
-                index: 1,
-                x: 0,
-                y: 0,
-                w: dc.w,
-                h: dc.h,
-                name: `Phôi in trọn gói (${dc.w} × ${dc.h} mm)`,
-              },
-            ],
-          }
-        : determineCutScheme(parentW, parentH, dc.w, dc.h, calculateCutsFromParent(parentW, parentH, dc.w, dc.h));
-
-      candidates.push({
-        name: dc.name,
-        sheetWidthMm: dc.w,
-        sheetHeightMm: dc.h,
-        cutsFromParent: isWithPaper ? 1 : calculateCutsFromParent(parentW, parentH, dc.w, dc.h),
-        cutScheme,
-        gripperMarginMm: 2.5,
-      });
-    }
-  } else {
-    // In Offset: Các phương án chia khổ giấy mẹ chuẩn công nghiệp
-    // Phương án 0: Nguyên khổ (Chia 1) - ví dụ 65x86 (860 x 650 mm)
-    if (Math.max(parentW, parentH) <= 920) {
-      const w1 = Math.max(parentW, parentH);
-      const h1 = Math.min(parentW, parentH);
-      candidates.push({
-        name: `Khổ nguyên ${Math.round(parentW/10)}x${Math.round(parentH/10)}cm (Bắt nhíp ${w1/10}cm)`,
-        sheetWidthMm: w1,
-        sheetHeightMm: h1,
-        cutsFromParent: 1,
-        cutScheme: buildFullCutScheme(parentW, parentH),
-        gripperMarginMm,
-      });
-    }
-
-    // Phương án 1: Chia 2 (Cắt đôi)
-    // Cắt đôi chiều dài (thường tạo ra khổ 430 x 650 mm từ 65x86)
-    const longSide = Math.max(parentW, parentH);
-    const shortSide = Math.min(parentW, parentH);
-    const cut2_h = Math.floor(longSide / 2);
-    const cut2_w = shortSide;
-    candidates.push({
-      name: `Khổ chia 2 (${cut2_w} x ${cut2_h} mm)`,
-      sheetWidthMm: Math.max(cut2_w, cut2_h),
-      sheetHeightMm: Math.min(cut2_w, cut2_h),
-      cutsFromParent: 2,
-      cutScheme: buildCut2Scheme(parentW, parentH),
-      gripperMarginMm,
-    });
-
-    // Phương án 2: Chia 4 (Cắt chữ thập)
-    const cut4_w = Math.floor(parentW / 2);
-    const cut4_h = Math.floor(parentH / 2);
-    candidates.push({
-      name: `Khổ chia 4 (${cut4_w} x ${cut4_h} mm)`,
-      sheetWidthMm: Math.max(cut4_w, cut4_h),
-      sheetHeightMm: Math.min(cut4_w, cut4_h),
-      cutsFromParent: 4,
-      cutScheme: buildCut4Scheme(parentW, parentH),
-      gripperMarginMm,
-    });
-
-    // Phương án 3: Chia 8 (Cắt 8 - cho ấn phẩm nhỏ như namecard, tag...)
-    const cut8_1 = Math.floor(shortSide / 2);
-    const cut8_2 = Math.floor(longSide / 4);
-    candidates.push({
-      name: `Khổ chia 8 (${cut8_1} x ${cut8_2} mm)`,
-      sheetWidthMm: Math.max(cut8_1, cut8_2),
-      sheetHeightMm: Math.min(cut8_1, cut8_2),
-      cutsFromParent: 8,
-      cutScheme: buildCut8Scheme(parentW, parentH),
-      gripperMarginMm,
-    });
-  }
-
-  // 2. Đánh giá tất cả phương án để tìm phương án tối ưu nhất
-  let bestCandidateResult: {
-    candidate: EvaluationCandidate;
-    ups: number;
-    cols: number;
-    rows: number;
-    isRotated: boolean;
-    boxes: BoxCoordinate[];
-    efficiency: number;
-    usableW: number;
-    usableH: number;
-  } | null = null;
-
-  for (const cand of candidates) {
-    const layout = evaluateImpositionLayout({
-      sheetW: cand.sheetWidthMm,
-      sheetH: cand.sheetHeightMm,
-      itemW: widthMm,
-      itemH: heightMm,
-      bleedMm,
-      gripperMarginMm: cand.gripperMarginMm,
-      isDigital: printTech === 'digital',
-    });
-
-    if (printTech === 'digital') {
-      if (digitalMode === 'with_paper') {
-        // In nhanh kèm giấy: Chọn khổ phôi có số con (ups) trên tờ in lớn nhất
-        // Nếu số con bằng nhau, ưu tiên 325x430 mm (hoặc 325x355 mm nếu là Fort F180/F230 vì rẻ hơn)
-        if (!bestCandidateResult) {
-          bestCandidateResult = { candidate: cand, ...layout };
-        } else {
-          if (layout.ups > bestCandidateResult.ups) {
-            bestCandidateResult = { candidate: cand, ...layout };
-          } else if (layout.ups === bestCandidateResult.ups && layout.ups > 0) {
-            const isFortSpecial = paperType.code.toUpperCase().includes('F180') || paperType.code.toUpperCase().includes('F230');
-            const isCand355 = cand.name.includes('355');
-            if (isFortSpecial && isCand355) {
-              bestCandidateResult = { candidate: cand, ...layout };
-            }
-          }
-        }
-      } else {
-        // In gia công Konica C12000:
-        // Chọn khổ máy in có layout.ups > 0 và chi phí ước tính trên mỗi con thành phẩm là thấp nhất
-        // (Tránh trường hợp in tờ rơi A4 mà lại chọn nhầm khổ banner 1.2 mét)
-        const approxClick = getApproxKonicaClick(cand.sheetWidthMm, cand.sheetHeightMm);
-        const costPerPiece = layout.ups > 0 ? approxClick / layout.ups : Infinity;
-
-        if (!bestCandidateResult) {
-          bestCandidateResult = { candidate: cand, ...layout };
-        } else {
-          const prevClick = getApproxKonicaClick(bestCandidateResult.candidate.sheetWidthMm, bestCandidateResult.candidate.sheetHeightMm);
-          const prevCostPerPiece = bestCandidateResult.ups > 0 ? prevClick / bestCandidateResult.ups : Infinity;
-          if (layout.ups > 0 && costPerPiece < prevCostPerPiece) {
-            bestCandidateResult = { candidate: cand, ...layout };
-          }
-        }
-      }
-    } else {
-      // In Offset: Ưu tiên tổng số con sinh ra từ 1 tờ giấy mẹ
-      const totalUps = layout.ups * cand.cutsFromParent;
-      if (!bestCandidateResult) {
-        bestCandidateResult = { candidate: cand, ...layout };
-      } else {
-        const currentBestTotal = bestCandidateResult.ups * bestCandidateResult.candidate.cutsFromParent;
-        if (totalUps > currentBestTotal) {
-          bestCandidateResult = { candidate: cand, ...layout };
-        } else if (totalUps === currentBestTotal) {
-          if (cand.cutsFromParent > bestCandidateResult.candidate.cutsFromParent) {
-            bestCandidateResult = { candidate: cand, ...layout };
-          }
-        }
-      }
-    }
-  }
-
-  // Fallback nếu không có con nào vừa
-  if (!bestCandidateResult || bestCandidateResult.ups === 0) {
-    const fallbackCand = candidates[0];
-    bestCandidateResult = {
-      candidate: fallbackCand,
-      ups: 1,
-      cols: 1,
-      rows: 1,
-      isRotated: false,
-      boxes: [
-        {
-          index: 1,
-          x: 10,
-          y: 10,
-          w: widthMm + bleedMm * 2,
-          h: heightMm + bleedMm * 2,
-          trimW: widthMm,
-          trimH: heightMm,
-          bleedMm,
-          isRotated: false,
-        },
-      ],
-      efficiency: 10,
-      usableW: fallbackCand.sheetWidthMm,
-      usableH: fallbackCand.sheetHeightMm,
-    };
-  }
-
-  const { candidate, ups, cols, rows, isRotated, boxes, efficiency, usableW, usableH } = bestCandidateResult;
-  const isWithPaper = printTech === 'digital' && digitalMode === 'with_paper';
-
-  return {
-    parentSheet: {
-      widthCm: isWithPaper ? candidate.sheetWidthMm / 10 : paperType.parentWidthCm,
-      heightCm: isWithPaper ? candidate.sheetHeightMm / 10 : paperType.parentHeightCm,
-      name: isWithPaper
-        ? `Phôi giấy INTC (${candidate.sheetWidthMm / 10}x${candidate.sheetHeightMm / 10}cm)`
-        : `${paperType.name} (${paperType.parentWidthCm}x${paperType.parentHeightCm}cm)`,
-    },
-    printSheet: {
-      widthMm: candidate.sheetWidthMm,
-      heightMm: candidate.sheetHeightMm,
-      name: candidate.name,
-    },
-    upsPerPrintSheet: ups,
-    cutsPerParentSheet: isWithPaper ? 1 : candidate.cutsFromParent,
-    totalUpsPerParentSheet: isWithPaper ? ups : ups * candidate.cutsFromParent,
-    gripperMarginMm: candidate.gripperMarginMm,
-    usableWidthMm: usableW,
-    usableHeightMm: usableH,
-    cols,
-    rows,
-    isRotated,
-    boxes,
-    sheetEfficiencyPercent: Math.round(efficiency * 10) / 10,
-    cutScheme: candidate.cutScheme,
-  };
-}
-
-function getApproxKonicaClick(w: number, h: number): number {
-  const maxDim = Math.max(w, h);
-  if (maxDim <= 300) return 800; // A4
-  if (maxDim <= 360) return 1000; // 330x355
-  if (maxDim <= 425) return 1600; // A3
-  if (maxDim <= 500) return 2500; // 330x483 (A3+)
-  return 7000; // 330x1200 Banner
-}
-
-// -----------------------------------------------------------------------------------------
-// THUẬT TOÁN XẾP BÌNH BÀI CHUẨN XÉNG CÔNG NGHIỆP TRÊN TỜ IN MÁY
-// -----------------------------------------------------------------------------------------
-interface LayoutEvalParams {
+export interface SheetLayoutOptions {
   sheetW: number;
   sheetH: number;
+  /** Kích thước thành phẩm (đã xén) */
   itemW: number;
   itemH: number;
-  bleedMm: number;
-  gripperMarginMm: number;
-  isDigital?: boolean;
+  /** Tràn lề chừa quanh cụm con (offset). In nhanh để 0 – tràn lề ăn vào lề máy */
+  outerBleed: number;
+  /** Khoảng cách giữa các con. 0 = xén chung dao */
+  gap: number;
+  gripper: number;
+  side: number;
+  tail: number;
+  /** Bắt buộc số con chẵn (in tự trở / trở nhíp) */
+  requireEven?: boolean;
 }
 
-interface LayoutResult {
+export interface SheetLayout {
   ups: number;
-  cols: number;
-  rows: number;
-  isRotated: boolean;
   boxes: BoxCoordinate[];
   efficiency: number;
-  usableW: number;
-  usableH: number;
+  sheetW: number;
+  sheetH: number;
 }
 
-function evaluateImpositionLayout({
-  sheetW,
-  sheetH,
-  itemW,
-  itemH,
-  bleedMm,
-  gripperMarginMm,
-  isDigital = false,
-}: LayoutEvalParams): LayoutResult {
-  // Quy ước máy in:
-  // Cạnh dài: width = max(sheetW, sheetH), Cạnh ngắn: height = min(sheetW, sheetH)
-  const W = Math.max(sheetW, sheetH);
-  const H = Math.min(sheetW, sheetH);
+interface Block {
+  cols: number;
+  rows: number;
+  w: number; // kích thước 1 con theo hướng của block
+  h: number;
+  rotated: boolean;
+}
 
-  let marginSide = 4;
-  let marginTail = 4;
-  let marginGripper = gripperMarginMm;
+interface Arrangement {
+  blocks: { block: Block; dx: number; dy: number }[];
+  usedW: number;
+  usedH: number;
+  count: number;
+}
 
-  if (isDigital) {
-    // Máy in kỹ thuật số: Không có càng kẹp nhíp cơ học 10mm như offset.
-    // Lề trắng máy in (non-printable margin) chỉ 2.5mm xung quanh 4 mép.
-    marginSide = 2.5;
-    marginTail = 2.5;
-    marginGripper = 2.5;
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+/** Số con xếp được trên một chiều dài `avail` với kích thước `size` và khoảng cách `gap` */
+export function fitCount(avail: number, size: number, gap: number): number {
+  if (size <= 0 || avail < size) return 0;
+  return Math.floor((avail + gap + 1e-9) / (size + gap));
+}
+
+const span = (n: number, size: number, gap: number) => (n > 0 ? n * size + (n - 1) * gap : 0);
+
+function makeBlock(availW: number, availH: number, w: number, h: number, gap: number, rotated: boolean): Block {
+  return { cols: fitCount(availW, w, gap), rows: fitCount(availH, h, gap), w, h, rotated };
+}
+
+/**
+ * Tìm cách xếp nhiều con nhất trong vùng availW × availH:
+ * lưới thẳng, lưới xoay 90°, hoặc ghép 2 khối (thẳng + xoay) chia theo chiều ngang/dọc.
+ */
+function bestArrangement(availW: number, availH: number, itemW: number, itemH: number, gap: number): Arrangement {
+  const candidates: Arrangement[] = [];
+
+  for (const rotated of [false, true]) {
+    const w = rotated ? itemH : itemW;
+    const h = rotated ? itemW : itemH;
+    const b = makeBlock(availW, availH, w, h, gap, rotated);
+    const count = b.cols * b.rows;
+    candidates.push({
+      blocks: count > 0 ? [{ block: b, dx: 0, dy: 0 }] : [],
+      usedW: span(b.cols, w, gap),
+      usedH: span(b.rows, h, gap),
+      count,
+    });
   }
 
-  const usableW = W - marginSide * 2;
-  const usableH = H - (marginGripper + marginTail);
+  // Ghép 2 khối – chỉ nhận khi nhiều con hơn hẳn lưới đơn
+  for (const firstRotated of [false, true]) {
+    const w1 = firstRotated ? itemH : itemW;
+    const h1 = firstRotated ? itemW : itemH;
+    const w2 = h1;
+    const h2 = w1;
 
-  if (usableW < itemW && usableW < itemH) {
-    return { ups: 0, cols: 0, rows: 0, isRotated: false, boxes: [], efficiency: 0, usableW, usableH };
-  }
+    // Chia theo chiều ngang: khối 1 bên trái, khối 2 bên phải
+    const maxCols = fitCount(availW, w1, gap);
+    const rows1 = fitCount(availH, h1, gap);
+    for (let c = 1; c < maxCols; c++) {
+      const used1 = span(c, w1, gap);
+      const rest = availW - used1 - gap;
+      const b2 = makeBlock(rest, availH, w2, h2, gap, !firstRotated);
+      const count = c * rows1 + b2.cols * b2.rows;
+      if (b2.cols * b2.rows === 0 || rows1 === 0) continue;
+      candidates.push({
+        blocks: [
+          { block: { cols: c, rows: rows1, w: w1, h: h1, rotated: firstRotated }, dx: 0, dy: 0 },
+          { block: b2, dx: used1 + gap, dy: 0 },
+        ],
+        usedW: used1 + gap + span(b2.cols, w2, gap),
+        usedH: Math.max(span(rows1, h1, gap), span(b2.rows, h2, gap)),
+        count,
+      });
+    }
 
-  // --- Cách 1: Xếp Thẳng (Không xoay) ---
-  let cols1 = 0;
-  let rows1 = 0;
-  if (isDigital) {
-    // In nhanh: Các con xếp sát nhau (cắt 1 nhát chung dao). Tràn lề ăn vào biên giấy ngoài cùng.
-    cols1 = Math.max(0, Math.floor(usableW / itemW));
-    rows1 = Math.max(0, Math.floor(usableH / itemH));
-  } else {
-    // In offset: Chừa lề kẹp nhíp và đường tràn lề
-    cols1 = Math.max(0, Math.floor((usableW - 2 * bleedMm) / itemW));
-    rows1 = Math.max(0, Math.floor((usableH - 2 * bleedMm) / itemH));
-  }
-  const ups1 = cols1 * rows1;
-
-  // --- Cách 2: Xếp Xoay 90 độ ---
-  let cols2 = 0;
-  let rows2 = 0;
-  if (isDigital) {
-    cols2 = Math.max(0, Math.floor(usableW / itemH));
-    rows2 = Math.max(0, Math.floor(usableH / itemW));
-  } else {
-    cols2 = Math.max(0, Math.floor((usableW - 2 * bleedMm) / itemH));
-    rows2 = Math.max(0, Math.floor((usableH - 2 * bleedMm) / itemW));
-  }
-  const ups2 = cols2 * rows2;
-
-  // Chọn phương án tốt nhất giữa Xếp Thẳng (ups1) và Xếp Xoay 90° (ups2)
-  let bestUps = ups1;
-  let bestCols = cols1;
-  let bestRows = rows1;
-  let isRotated = false;
-
-  if (ups2 > bestUps) {
-    bestUps = ups2;
-    bestCols = cols2;
-    bestRows = rows2;
-    isRotated = true;
-  }
-
-  // Tạo danh sách tọa độ các hộp sản phẩm
-  const boxes: BoxCoordinate[] = [];
-  const boxW = isRotated ? itemH : itemW;
-  const boxH = isRotated ? itemW : itemH;
-
-  // Canh giữa cụm con trong tờ in
-  const blockW = bestCols * boxW;
-  const blockH = bestRows * boxH;
-  const startX = isDigital
-    ? Math.max(0, Math.round(((W - blockW) / 2) * 10) / 10)
-    : marginSide + Math.max(0, Math.floor((usableW - (blockW + 2 * bleedMm)) / 2)) + bleedMm;
-  const startY = isDigital
-    ? Math.max(0, Math.round(((H - blockH) / 2) * 10) / 10)
-    : marginTail + Math.max(0, Math.floor((usableH - (blockH + 2 * bleedMm)) / 2)) + bleedMm;
-
-  let idx = 1;
-  for (let r = 0; r < bestRows; r++) {
-    for (let c = 0; c < bestCols; c++) {
-      boxes.push({
-        index: idx++,
-        x: Math.round((startX + c * boxW) * 10) / 10,
-        y: Math.round((startY + r * boxH) * 10) / 10,
-        w: boxW,
-        h: boxH,
-        trimW: itemW,
-        trimH: itemH,
-        bleedMm,
-        isRotated,
+    // Chia theo chiều dọc: khối 1 phía trên, khối 2 phía dưới
+    const maxRows = fitCount(availH, h1, gap);
+    const cols1 = fitCount(availW, w1, gap);
+    for (let r = 1; r < maxRows; r++) {
+      const used1 = span(r, h1, gap);
+      const rest = availH - used1 - gap;
+      const b2 = makeBlock(availW, rest, w2, h2, gap, !firstRotated);
+      const count = r * cols1 + b2.cols * b2.rows;
+      if (b2.cols * b2.rows === 0 || cols1 === 0) continue;
+      candidates.push({
+        blocks: [
+          { block: { cols: cols1, rows: r, w: w1, h: h1, rotated: firstRotated }, dx: 0, dy: 0 },
+          { block: b2, dx: 0, dy: used1 + gap },
+        ],
+        usedW: Math.max(span(cols1, w1, gap), span(b2.cols, w2, gap)),
+        usedH: used1 + gap + span(b2.rows, h2, gap),
+        count,
       });
     }
   }
 
-  const totalItemArea = itemW * itemH * bestUps;
-  const sheetArea = W * H;
-  const efficiency = sheetArea > 0 ? (totalItemArea / sheetArea) * 100 : 0;
-
-  return {
-    ups: bestUps,
-    cols: bestCols,
-    rows: bestRows,
-    isRotated,
-    boxes,
-    efficiency,
-    usableW,
-    usableH,
-  };
-}
-
-// -----------------------------------------------------------------------------------------
-// SINH SƠ ĐỒ CẮT GIẤY MẸ TRỰC QUAN (PAPER CUTTING SCHEME)
-// -----------------------------------------------------------------------------------------
-
-export function determineCutScheme(
-  parentW: number,
-  parentH: number,
-  printW: number,
-  printH: number,
-  cuts: number
-): PaperCutScheme {
-  const pw = Math.max(parentW, parentH);
-  const ph = Math.min(parentW, parentH);
-
-  if (cuts <= 1) return buildFullCutScheme(pw, ph);
-  if (cuts === 2) return buildCut2Scheme(pw, ph);
-  if (cuts === 4) return buildCut4Scheme(pw, ph);
-  if (cuts === 8) return buildCut8Scheme(pw, ph);
-  return buildSimpleCutScheme(pw, ph, printW, printH, cuts);
-}
-
-function buildFullCutScheme(parentW: number, parentH: number): PaperCutScheme {
-  const pw = Math.max(parentW, parentH);
-  const ph = Math.min(parentW, parentH);
-
-  return {
-    parentWidthMm: pw,
-    parentHeightMm: ph,
-    cutType: 'chia_1',
-    cutDescription: `In nguyên khổ ${pw} x ${ph} mm (không cần xén trước khi in)`,
-    cutsCount: 1,
-    cutSheetWidthMm: pw,
-    cutSheetHeightMm: ph,
-    wasteAreaPercent: 0,
-    cutLines: [],
-    blocks: [
-      {
-        index: 1,
-        x: 0,
-        y: 0,
-        w: pw,
-        h: ph,
-        name: `Tờ in #1 (${pw} x ${ph} mm)`,
-      },
-    ],
-  };
-}
-
-function buildCut2Scheme(parentW: number, parentH: number): PaperCutScheme {
-  const pw = Math.max(parentW, parentH); // ví dụ 860mm
-  const ph = Math.min(parentW, parentH); // ví dụ 650mm
-  const cutW = Math.floor(pw / 2); // 430mm
-
-  return {
-    parentWidthMm: pw,
-    parentHeightMm: ph,
-    cutType: 'chia_2',
-    cutDescription: `Xén đôi chiều ${pw}mm thành 2 tờ ${ph} x ${cutW} mm (Chia 2)`,
-    cutsCount: 2,
-    cutSheetWidthMm: ph,
-    cutSheetHeightMm: cutW,
-    wasteAreaPercent: 0,
-    cutLines: [
-      {
-        x1: cutW,
-        y1: 0,
-        x2: cutW,
-        y2: ph,
-        type: 'vertical',
-        label: `Xén dọc: ${cutW}mm`,
-      },
-    ],
-    blocks: [
-      {
-        index: 1,
-        x: 0,
-        y: 0,
-        w: cutW,
-        h: ph,
-        name: `Tờ in #1 (${ph} x ${cutW} mm)`,
-      },
-      {
-        index: 2,
-        x: cutW,
-        y: 0,
-        w: pw - cutW,
-        h: ph,
-        name: `Tờ in #2 (${ph} x ${cutW} mm)`,
-      },
-    ],
-  };
-}
-
-function buildCut4Scheme(parentW: number, parentH: number): PaperCutScheme {
-  const pw = Math.max(parentW, parentH); // ví dụ 860 hoặc 1090
-  const ph = Math.min(parentW, parentH); // ví dụ 650 hoặc 790
-  const halfW = Math.floor(pw / 2); // 430
-  const halfH = Math.floor(ph / 2); // 325
-
-  return {
-    parentWidthMm: pw,
-    parentHeightMm: ph,
-    cutType: 'chia_4',
-    cutDescription: `Xén chữ thập (Chia 4) thành 4 tờ ${halfW} x ${halfH} mm`,
-    cutsCount: 4,
-    cutSheetWidthMm: halfW,
-    cutSheetHeightMm: halfH,
-    wasteAreaPercent: 0,
-    cutLines: [
-      {
-        x1: halfW,
-        y1: 0,
-        x2: halfW,
-        y2: ph,
-        type: 'vertical',
-        label: `Xén dọc: ${halfW}mm`,
-      },
-      {
-        x1: 0,
-        y1: halfH,
-        x2: pw,
-        y2: halfH,
-        type: 'horizontal',
-        label: `Xén ngang: ${halfH}mm`,
-      },
-    ],
-    blocks: [
-      { index: 1, x: 0, y: 0, w: halfW, h: halfH, name: `Tờ in #1 (${halfW} x ${halfH} mm)` },
-      { index: 2, x: halfW, y: 0, w: pw - halfW, h: halfH, name: `Tờ in #2 (${halfW} x ${halfH} mm)` },
-      { index: 3, x: 0, y: halfH, w: halfW, h: ph - halfH, name: `Tờ in #3 (${halfW} x ${halfH} mm)` },
-      { index: 4, x: halfW, y: halfH, w: pw - halfW, h: ph - halfH, name: `Tờ in #4 (${halfW} x ${halfH} mm)` },
-    ],
-  };
-}
-
-function buildCut8Scheme(parentW: number, parentH: number): PaperCutScheme {
-  const pw = Math.max(parentW, parentH); // ví dụ 860
-  const ph = Math.min(parentW, parentH); // ví dụ 650
-  const colW = Math.floor(pw / 4); // 215
-  const rowH = Math.floor(ph / 2); // 325
-
-  const blocks: PaperCutBlock[] = [];
-  const cutLines: PaperCutLine[] = [
-    { x1: colW, y1: 0, x2: colW, y2: ph, type: 'vertical', label: `Xén: ${colW}mm` },
-    { x1: colW * 2, y1: 0, x2: colW * 2, y2: ph, type: 'vertical', label: `Xén: ${colW * 2}mm` },
-    { x1: colW * 3, y1: 0, x2: colW * 3, y2: ph, type: 'vertical', label: `Xén: ${colW * 3}mm` },
-    { x1: 0, y1: rowH, x2: pw, y2: rowH, type: 'horizontal', label: `Xén ngang: ${rowH}mm` },
-  ];
-
-  let idx = 1;
-  for (let r = 0; r < 2; r++) {
-    for (let c = 0; c < 4; c++) {
-      const curW = c === 3 ? pw - colW * 3 : colW;
-      const curH = r === 1 ? ph - rowH : rowH;
-      blocks.push({
-        index: idx++,
-        x: c * colW,
-        y: r * rowH,
-        w: curW,
-        h: curH,
-        name: `Tờ in #${idx - 1} (${rowH} x ${colW} mm)`,
-      });
-    }
+  // Ưu tiên nhiều con nhất, sau đó ít khối hơn (dễ xén), rồi tới hướng thẳng
+  let best = candidates[0];
+  for (const c of candidates) {
+    if (c.count > best.count || (c.count === best.count && c.blocks.length < best.blocks.length)) best = c;
   }
-
-  return {
-    parentWidthMm: pw,
-    parentHeightMm: ph,
-    cutType: 'chia_8',
-    cutDescription: `Xén chia 8 thành 8 tờ ${rowH} x ${colW} mm`,
-    cutsCount: 8,
-    cutSheetWidthMm: rowH,
-    cutSheetHeightMm: colW,
-    wasteAreaPercent: 0,
-    cutLines,
-    blocks,
-  };
+  return best;
 }
 
-function buildSimpleCutScheme(
-  parentW: number,
-  parentH: number,
-  printW: number,
-  printH: number,
-  cuts: number
-): PaperCutScheme {
-  const pw = Math.max(parentW, parentH);
-  const ph = Math.min(parentW, parentH);
+/** Xếp con lên một tờ in. Trả về ups = 0 nếu không vừa. */
+export function layoutOnSheet(opts: SheetLayoutOptions): SheetLayout {
+  const W = Math.max(opts.sheetW, opts.sheetH);
+  const H = Math.min(opts.sheetW, opts.sheetH);
+  const empty: SheetLayout = { ups: 0, boxes: [], efficiency: 0, sheetW: W, sheetH: H };
 
-  // So sánh 2 chiều xếp trên tờ mẹ
-  const c1 = Math.floor(pw / printW);
-  const r1 = Math.floor(ph / printH);
-  const tot1 = c1 * r1;
+  const availW = W - 2 * opts.side - 2 * opts.outerBleed;
+  const availH = H - opts.gripper - opts.tail - 2 * opts.outerBleed;
+  if (availW <= 0 || availH <= 0 || opts.itemW <= 0 || opts.itemH <= 0) return empty;
 
-  const c2 = Math.floor(pw / printH);
-  const r2 = Math.floor(ph / printW);
-  const tot2 = c2 * r2;
+  const arr = bestArrangement(availW, availH, opts.itemW, opts.itemH, opts.gap);
+  if (arr.count === 0) return empty;
 
-  const useRotated = tot2 > tot1;
-  const pieceW = useRotated ? printH : printW;
-  const pieceH = useRotated ? printW : printH;
-  const cols = useRotated ? c2 : c1;
-  const rows = useRotated ? r2 : r1;
+  // Căn giữa cụm con trong vùng khả dụng
+  const originX = opts.side + opts.outerBleed + (availW - arr.usedW) / 2;
+  const originY = opts.tail + opts.outerBleed + (availH - arr.usedH) / 2;
 
-  const actualCols = Math.max(1, cols);
-  const actualRows = Math.max(1, rows);
-
-  const blocks: PaperCutBlock[] = [];
-  const cutLines: PaperCutLine[] = [];
-
+  let boxes: BoxCoordinate[] = [];
   let idx = 1;
-  for (let r = 0; r < actualRows; r++) {
-    for (let c = 0; c < actualCols; c++) {
-      if (idx <= cuts) {
-        blocks.push({
+  for (const { block, dx, dy } of arr.blocks) {
+    for (let r = 0; r < block.rows; r++) {
+      for (let c = 0; c < block.cols; c++) {
+        boxes.push({
           index: idx++,
-          x: c * pieceW,
-          y: r * pieceH,
-          w: pieceW,
-          h: pieceH,
-          name: `Tờ in #${idx - 1} (${pieceW} x ${pieceH} mm)`,
+          x: round1(originX + dx + c * (block.w + opts.gap)),
+          y: round1(originY + dy + r * (block.h + opts.gap)),
+          w: block.w,
+          h: block.h,
+          isRotated: block.rotated,
         });
       }
     }
   }
 
-  // Tạo cut lines
-  for (let c = 1; c < actualCols; c++) {
-    cutLines.push({
-      x1: c * pieceW,
-      y1: 0,
-      x2: c * pieceW,
-      y2: Math.min(ph, actualRows * pieceH),
-      type: 'vertical',
-      label: `Xén: ${c * pieceW}mm`,
-    });
+  if (opts.requireEven && boxes.length % 2 === 1) {
+    boxes = boxes.slice(0, boxes.length - 1);
   }
-  for (let r = 1; r < actualRows; r++) {
-    cutLines.push({
-      x1: 0,
-      y1: r * pieceH,
-      x2: Math.min(pw, actualCols * pieceW),
-      y2: r * pieceH,
-      type: 'horizontal',
-      label: `Xén: ${r * pieceH}mm`,
-    });
-  }
-
-  const usedArea = cuts * pieceW * pieceH;
-  const totalArea = pw * ph;
-  const wastePercent = totalArea > 0 ? Math.max(0, Math.round(((totalArea - usedArea) / totalArea) * 100)) : 0;
+  const ups = boxes.length;
+  if (ups === 0) return empty;
 
   return {
-    parentWidthMm: pw,
-    parentHeightMm: ph,
-    cutType: cuts === 2 ? 'chia_2' : cuts === 4 ? 'chia_4' : cuts === 8 ? 'chia_8' : 'custom',
-    cutDescription: `Cắt ${cuts} tờ in (${pieceW} x ${pieceH} mm) từ tờ giấy mẹ ${pw} x ${ph} mm`,
-    cutsCount: cuts,
-    cutSheetWidthMm: pieceW,
-    cutSheetHeightMm: pieceH,
-    wasteAreaPercent: wastePercent,
-    cutLines,
-    blocks,
+    ups,
+    boxes,
+    efficiency: (ups * opts.itemW * opts.itemH * 100) / (W * H),
+    sheetW: W,
+    sheetH: H,
   };
 }
 
-function calculateCutsFromParent(parentW: number, parentH: number, printW: number, printH: number): number {
-  const cuts1 = Math.floor(parentW / printW) * Math.floor(parentH / printH);
-  const cuts2 = Math.floor(parentW / printH) * Math.floor(parentH / printW);
-  return Math.max(cuts1, cuts2, 1);
+// -----------------------------------------------------------------------------
+// Chia khổ giấy mẹ
+// -----------------------------------------------------------------------------
+
+export interface SheetDivision {
+  /** Kích thước tờ in (dài × ngắn) */
+  widthMm: number;
+  heightMm: number;
+  /** Số tờ in xả được từ 1 tờ mẹ */
+  cuts: number;
+}
+
+/**
+ * Các cách chia khổ mẹ thông dụng: chia dọc cạnh dài a phần × cạnh ngắn b phần
+ * (chia 1, 2, 3, 4, 6, 8, 9, 12, 16…).
+ */
+export function standardDivisions(parentW: number, parentH: number, maxParts = 4): SheetDivision[] {
+  const PW = Math.max(parentW, parentH);
+  const PH = Math.min(parentW, parentH);
+  const seen = new Map<string, SheetDivision>();
+  for (let a = 1; a <= maxParts; a++) {
+    for (let b = 1; b <= maxParts; b++) {
+      const w = Math.floor(PW / a);
+      const h = Math.floor(PH / b);
+      const div: SheetDivision = { widthMm: Math.max(w, h), heightMm: Math.min(w, h), cuts: a * b };
+      const key = `${div.widthMm}x${div.heightMm}`;
+      const prev = seen.get(key);
+      if (!prev || prev.cuts < div.cuts) seen.set(key, div);
+    }
+  }
+  return [...seen.values()].sort((x, y) => x.cuts - y.cuts);
+}
+
+/** Số tờ in kích thước pieceW × pieceH xả được từ tờ mẹ (lưới, chọn hướng tốt nhất) */
+export function piecesFromParent(parentW: number, parentH: number, pieceW: number, pieceH: number): number {
+  const a = Math.floor(parentW / pieceW) * Math.floor(parentH / pieceH);
+  const b = Math.floor(parentW / pieceH) * Math.floor(parentH / pieceW);
+  return Math.max(a, b);
+}
+
+/** Dựng sơ đồ xả tờ mẹ thành các tờ in (lưới đều, đường xén theo dao chém) */
+export function buildCutScheme(parentW: number, parentH: number, pieceW: number, pieceH: number): PaperCutScheme {
+  const PW = Math.max(parentW, parentH);
+  const PH = Math.min(parentW, parentH);
+
+  const optA = { cols: Math.floor(PW / pieceW), rows: Math.floor(PH / pieceH), w: pieceW, h: pieceH };
+  const optB = { cols: Math.floor(PW / pieceH), rows: Math.floor(PH / pieceW), w: pieceH, h: pieceW };
+  const opt = optB.cols * optB.rows > optA.cols * optA.rows ? optB : optA;
+  const count = opt.cols * opt.rows;
+
+  const blocks: PaperCutBlock[] = [];
+  let idx = 1;
+  for (let r = 0; r < opt.rows; r++) {
+    for (let c = 0; c < opt.cols; c++) {
+      blocks.push({
+        index: idx,
+        x: c * opt.w,
+        y: r * opt.h,
+        w: opt.w,
+        h: opt.h,
+        name: `Tờ in #${idx}`,
+      });
+      idx++;
+    }
+  }
+
+  const usedW = opt.cols * opt.w;
+  const usedH = opt.rows * opt.h;
+  const cutLines: PaperCutLine[] = [];
+  const lastCol = usedW < PW ? opt.cols : opt.cols - 1;
+  for (let c = 1; c <= lastCol; c++) {
+    cutLines.push({ x1: c * opt.w, y1: 0, x2: c * opt.w, y2: PH, type: 'vertical', label: `${c * opt.w}` });
+  }
+  const lastRow = usedH < PH ? opt.rows : opt.rows - 1;
+  for (let r = 1; r <= lastRow; r++) {
+    cutLines.push({ x1: 0, y1: r * opt.h, x2: Math.min(PW, usedW), y2: r * opt.h, type: 'horizontal', label: `${r * opt.h}` });
+  }
+
+  const waste = PW * PH > 0 ? Math.max(0, 100 - (count * pieceW * pieceH * 100) / (PW * PH)) : 0;
+  const pieceLong = Math.max(pieceW, pieceH);
+  const pieceShort = Math.min(pieceW, pieceH);
+
+  return {
+    parentWidthMm: PW,
+    parentHeightMm: PH,
+    cutDescription:
+      count <= 1
+        ? `In nguyên khổ ${PW} × ${PH} mm (không xả giấy)`
+        : `Chia ${count}: xả tờ mẹ ${PW} × ${PH} mm thành ${count} tờ ${pieceLong} × ${pieceShort} mm`,
+    cutsCount: count,
+    cutSheetWidthMm: pieceLong,
+    cutSheetHeightMm: pieceShort,
+    blocks,
+    cutLines,
+    wasteAreaPercent: round1(waste),
+    preCut: false,
+  };
+}
+
+/** Sơ đồ cho phôi cắt sẵn (in nhanh kèm giấy) */
+export function buildPreCutScheme(sheetW: number, sheetH: number, label: string): PaperCutScheme {
+  const W = Math.max(sheetW, sheetH);
+  const H = Math.min(sheetW, sheetH);
+  return {
+    parentWidthMm: W,
+    parentHeightMm: H,
+    cutDescription: `Phôi cắt sẵn ${W} × ${H} mm (${label}) – đã gồm trong đơn giá in, không xả từ khổ mẹ`,
+    cutsCount: 1,
+    cutSheetWidthMm: W,
+    cutSheetHeightMm: H,
+    blocks: [{ index: 1, x: 0, y: 0, w: W, h: H, name: 'Phôi in' }],
+    cutLines: [],
+    wasteAreaPercent: 0,
+    preCut: true,
+  };
 }

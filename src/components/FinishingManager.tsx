@@ -1,308 +1,613 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { FinishingService } from '@/types';
-import { Scissors, Plus, Edit2, Trash2, X, RefreshCw } from 'lucide-react';
+// =============================================================================
+// Quản lý bảng giá gia công sau in
+// =============================================================================
 
-export const FinishingManager: React.FC = () => {
-  const [services, setServices] = useState<FinishingService[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingService, setEditingService] = useState<Partial<FinishingService> | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+import React, { useMemo, useState } from 'react';
+import { Edit2, Eye, EyeOff, Plus, RefreshCw, Scissors, Search, Trash2 } from 'lucide-react';
+import type { FinishingCalcType, FinishingCategory, FinishingService } from '@/types';
+import { FINISHING_CALC_LABELS, FINISHING_CATEGORY_LABELS } from '@/lib/engine/constants';
+import { ApiError, api, errorMessage, useApi } from '@/lib/client';
+import { formatNumber, formatVnd } from '@/lib/format';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  EmptyState,
+  Field,
+  IconButton,
+  LoadingBlock,
+  Modal,
+  NumberInput,
+  PageHeader,
+  Select,
+  Table,
+  TextInput,
+  cn,
+  td,
+  th,
+  useToast,
+} from '@/components/ui';
 
-  const fetchServices = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch('/api/finishing');
-      const data = await res.json();
-      if (Array.isArray(data)) setServices(data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
+type FinishingForm = Omit<FinishingService, 'id'>;
+
+const CATEGORIES = Object.keys(FINISHING_CATEGORY_LABELS) as FinishingCategory[];
+const CALC_TYPES = Object.keys(FINISHING_CALC_LABELS) as FinishingCalcType[];
+
+const UNIT_SUFFIX: Record<FinishingCalcType, string> = {
+  per_m2: '/m²',
+  per_sheet: '/tờ in',
+  per_product: '/sp',
+  die_cut: '/con + khuôn',
+  fixed: ' trọn gói',
+};
+
+const PRICE_UNIT: Record<FinishingCalcType, string> = {
+  per_m2: 'đ / m²',
+  per_sheet: 'đ / tờ in',
+  per_product: 'đ / sp',
+  die_cut: 'đ / con',
+  fixed: 'trọn gói',
+};
+
+const UNIT_HINT: Record<FinishingCalcType, string> = {
+  per_m2: 'Tính theo diện tích thành phẩm (kể cả tràn lề) × số lượng × số mặt.',
+  per_sheet: 'Tính trên số tờ in thực (khổ máy), nhân số mặt.',
+  per_product: 'Tính trên mỗi sản phẩm thành phẩm.',
+  die_cut: 'Công bế mỗi con; tiền khuôn nhập ở ô “Tiền khuôn”.',
+  fixed: 'Một giá cho cả đơn hàng, không phụ thuộc số lượng.',
+};
+
+const CALC_TONE: Record<FinishingCalcType, 'sky' | 'blue' | 'teal' | 'purple' | 'amber'> = {
+  per_m2: 'sky',
+  per_sheet: 'blue',
+  per_product: 'teal',
+  die_cut: 'purple',
+  fixed: 'amber',
+};
+
+const EMPTY_FORM: FinishingForm = {
+  code: '',
+  name: '',
+  category: 'can_mang',
+  calcType: 'per_product',
+  unitPrice: 0,
+  minPrice: 0,
+  setupFee: 0,
+  wastePercent: 0,
+  wasteSheets: 0,
+  isActive: true,
+};
+
+function toForm(s: FinishingService): FinishingForm {
+  return {
+    code: s.code,
+    name: s.name,
+    category: s.category,
+    calcType: s.calcType,
+    unitPrice: s.unitPrice,
+    minPrice: s.minPrice,
+    setupFee: s.setupFee,
+    wastePercent: s.wastePercent,
+    wasteSheets: s.wasteSheets,
+    isActive: s.isActive,
+  };
+}
+
+function priceLabel(s: Pick<FinishingService, 'calcType' | 'unitPrice'>) {
+  return `${formatVnd(s.unitPrice)}${UNIT_SUFFIX[s.calcType]}`;
+}
+
+function apiErrors(err: unknown): string[] {
+  if (err instanceof ApiError && err.details && err.details.length > 0) return err.details;
+  return [errorMessage(err)];
+}
+
+// -----------------------------------------------------------------------------
+// Ví dụ tính cho 1.000 sp (giống công thức trong engine)
+// -----------------------------------------------------------------------------
+
+const EXAMPLE_QTY = 1000;
+/** Giả định A4 (210×297mm) + tràn lề 2mm mỗi cạnh */
+const EXAMPLE_AREA_M2 = ((210 + 4) / 1000) * ((297 + 4) / 1000);
+/** Giả định bình 4 sp / tờ in */
+const EXAMPLE_UPS = 4;
+
+function explainExample(f: FinishingForm): { formula: string; total: number; note: string } {
+  const withMin = (raw: number) => Math.max(f.minPrice, Math.round(raw));
+  const minText = f.minPrice > 0 ? `, tối thiểu ${formatVnd(f.minPrice)}` : '';
+  const setupText = f.setupFee > 0 ? ` + phí khuôn ${formatVnd(f.setupFee)}` : '';
+
+  switch (f.calcType) {
+    case 'per_m2': {
+      const m2 = EXAMPLE_AREA_M2 * EXAMPLE_QTY;
+      return {
+        formula: `diện tích × đơn giá${minText}${setupText} → ${formatNumber(m2, true)} m² × ${formatVnd(f.unitPrice)}`,
+        total: withMin(m2 * f.unitPrice) + f.setupFee,
+        note: 'Giả định khổ A4 (210×297mm, tràn lề 2mm), 1 mặt. Làm 2 mặt thì diện tích × 2.',
+      };
     }
-  };
+    case 'per_sheet': {
+      const sheets = Math.ceil(EXAMPLE_QTY / EXAMPLE_UPS);
+      return {
+        formula: `số tờ in × đơn giá${minText}${setupText} → ${formatNumber(sheets)} tờ × ${formatVnd(f.unitPrice)}`,
+        total: withMin(sheets * f.unitPrice) + f.setupFee,
+        note: `Giả định bình ${EXAMPLE_UPS} sp/tờ in, 1 mặt.`,
+      };
+    }
+    case 'die_cut':
+      return {
+        formula: `khuôn + SL × đơn giá${minText} → ${formatVnd(f.setupFee)} + ${formatNumber(EXAMPLE_QTY)} con × ${formatVnd(f.unitPrice)}`,
+        total: withMin(EXAMPLE_QTY * f.unitPrice) + f.setupFee,
+        note: 'Giá tối thiểu áp cho phần công bế, chưa gồm tiền khuôn.',
+      };
+    case 'fixed':
+      return {
+        formula: `trọn gói ${formatVnd(f.unitPrice)}${setupText}`,
+        total: f.unitPrice + f.setupFee,
+        note: 'Không phụ thuộc số lượng, không áp dụng giá tối thiểu.',
+      };
+    default:
+      return {
+        formula: `SL × đơn giá${minText}${setupText} → ${formatNumber(EXAMPLE_QTY)} sp × ${formatVnd(f.unitPrice)}`,
+        total: withMin(EXAMPLE_QTY * f.unitPrice) + f.setupFee,
+        note: '',
+      };
+  }
+}
 
-  useEffect(() => {
-    fetchServices();
-  }, []);
+// -----------------------------------------------------------------------------
+// Form thêm / sửa
+// -----------------------------------------------------------------------------
 
-  const handleOpenAdd = () => {
-    setEditingService({
-      code: `FIN_${Date.now().toString().slice(-4)}`,
-      name: 'Dịch vụ gia công ',
-      category: 'can_mang',
-      calcType: 'per_product',
-      unitPrice: 150,
-      minPrice: 50000,
-      setupFee: 0,
-      wastePercent: 1.0,
-      wasteSheets: 10,
-      isActive: true,
-    });
-    setIsModalOpen(true);
-  };
+function FinishingFormModal({
+  initial,
+  editingId,
+  onClose,
+  onSaved,
+}: {
+  initial: FinishingForm;
+  editingId: number | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [form, setForm] = useState<FinishingForm>(initial);
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const set = <K extends keyof FinishingForm>(key: K, value: FinishingForm[K]) => setForm((f) => ({ ...f, [key]: value }));
 
-  const handleOpenEdit = (s: FinishingService) => {
-    setEditingService({ ...s });
-    setIsModalOpen(true);
-  };
+  const example = explainExample(form);
 
-  const handleSave = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingService) return;
-
-    const isUpdate = Boolean(editingService.id);
-    const method = isUpdate ? 'PUT' : 'POST';
-
+    const local: string[] = [];
+    if (!form.name.trim()) local.push('Vui lòng nhập tên dịch vụ.');
+    if (!form.code.trim()) local.push('Vui lòng nhập mã dịch vụ.');
+    if (local.length > 0) {
+      setErrors(local);
+      return;
+    }
+    setSaving(true);
+    setErrors([]);
     try {
-      const res = await fetch('/api/finishing', {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingService),
-      });
-      if (res.ok) {
-        setIsModalOpen(false);
-        setEditingService(null);
-        fetchServices();
-      }
+      const body = { ...form, code: form.code.trim(), name: form.name.trim() };
+      if (editingId) await api(`/api/finishing/${editingId}`, { method: 'PUT', body });
+      else await api('/api/finishing', { method: 'POST', body });
+      toast.success(editingId ? 'Đã cập nhật dịch vụ gia công.' : 'Đã thêm dịch vụ gia công.');
+      onSaved();
     } catch (err) {
-      console.error(err);
+      setErrors(apiErrors(err));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa dịch vụ gia công này?')) return;
+  return (
+    <Modal
+      open
+      onClose={() => !saving && onClose()}
+      size="lg"
+      title={editingId ? 'Sửa dịch vụ gia công' : 'Thêm dịch vụ gia công'}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={saving}>
+            Huỷ
+          </Button>
+          <Button variant="primary" type="submit" form="finishing-form" loading={saving}>
+            {editingId ? 'Lưu thay đổi' : 'Thêm dịch vụ'}
+          </Button>
+        </>
+      }
+    >
+      <form id="finishing-form" onSubmit={submit} className="space-y-4" noValidate>
+        {errors.length > 0 && (
+          <Alert tone="error" title="Không lưu được">
+            <ul className="list-disc pl-4">
+              {errors.map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Field label="Tên dịch vụ *" className="sm:col-span-2" htmlFor="fin-name">
+            <TextInput
+              id="fin-name"
+              value={form.name}
+              maxLength={200}
+              onChange={(e) => set('name', e.target.value)}
+              placeholder="VD: Cán màng mờ"
+              autoFocus
+            />
+          </Field>
+          <Field label="Mã dịch vụ *" htmlFor="fin-code" hint="Chữ in hoa, không dấu cách">
+            <TextInput
+              id="fin-code"
+              value={form.code}
+              maxLength={80}
+              onChange={(e) => set('code', e.target.value.toUpperCase().replace(/\s+/g, '_'))}
+              placeholder="VD: CAN_MANG_MO"
+              className="font-mono"
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Nhóm" htmlFor="fin-category">
+            <Select id="fin-category" value={form.category} onChange={(e) => set('category', e.target.value as FinishingCategory)}>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {FINISHING_CATEGORY_LABELS[c]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Cách tính" htmlFor="fin-calc" hint={UNIT_HINT[form.calcType]}>
+            <Select id="fin-calc" value={form.calcType} onChange={(e) => set('calcType', e.target.value as FinishingCalcType)}>
+              {CALC_TYPES.map((c) => (
+                <option key={c} value={c}>
+                  {FINISHING_CALC_LABELS[c]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Field label={`Đơn giá (${PRICE_UNIT[form.calcType]})`} htmlFor="fin-price">
+            <NumberInput id="fin-price" value={form.unitPrice} onChange={(n) => set('unitPrice', n)} min={0} max={1e10} step={50} suffix="đ" />
+          </Field>
+          <Field label="Thành tiền tối thiểu" htmlFor="fin-min" hint={form.calcType === 'fixed' ? 'Không áp dụng cho trọn gói' : 'Chưa gồm tiền khuôn'}>
+            <NumberInput
+              id="fin-min"
+              value={form.minPrice}
+              onChange={(n) => set('minPrice', n)}
+              min={0}
+              max={1e10}
+              step={10000}
+              suffix="đ"
+              disabled={form.calcType === 'fixed'}
+            />
+          </Field>
+          <Field
+            label="Tiền khuôn / phí cố định"
+            htmlFor="fin-setup"
+            hint={form.calcType === 'die_cut' ? 'Tiền làm khuôn bế (mỗi đơn)' : 'Cộng thêm 1 lần mỗi đơn'}
+          >
+            <NumberInput id="fin-setup" value={form.setupFee} onChange={(n) => set('setupFee', n)} min={0} max={1e10} step={10000} suffix="đ" />
+          </Field>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-3">
+          <div>
+            <p className="text-xs font-semibold text-slate-700">Bù hao giấy cho công đoạn này</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Chỉ áp dụng khi in offset: số tờ in cộng thêm = tờ cố định + % × số tờ in thực. In nhanh (kỹ thuật số) không cộng bù hao gia công.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="% bù hao" htmlFor="fin-waste-pct">
+              <NumberInput id="fin-waste-pct" value={form.wastePercent} onChange={(n) => set('wastePercent', n)} min={0} max={100} step={0.5} suffix="%" />
+            </Field>
+            <Field label="Tờ bù hao cố định" htmlFor="fin-waste-sheets">
+              <NumberInput
+                id="fin-waste-sheets"
+                value={form.wasteSheets}
+                onChange={(n) => set('wasteSheets', n)}
+                min={0}
+                max={100000}
+                allowDecimal={false}
+                suffix="tờ"
+              />
+            </Field>
+          </div>
+        </div>
+
+        <Checkbox
+          checked={form.isActive}
+          onChange={(v) => set('isActive', v)}
+          label="Đang sử dụng"
+          description="Dịch vụ đã ngưng sẽ không hiện trong màn hình tính giá."
+        />
+
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+          <p className="font-semibold text-[11px] uppercase tracking-wide text-blue-700 mb-1">Ví dụ cho {formatNumber(EXAMPLE_QTY)} sp</p>
+          <p className="leading-relaxed">
+            {FINISHING_CALC_LABELS[form.calcType]}: {example.formula} = <span className="font-bold tabular-nums">{formatVnd(example.total)}</span>
+          </p>
+          {example.note && <p className="text-[11px] text-blue-700/80 mt-1">{example.note}</p>}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Trang chính
+// -----------------------------------------------------------------------------
+
+export function FinishingManager() {
+  const toast = useToast();
+  const { data, error, loading, reload, setData } = useApi<FinishingService[]>('/api/finishing');
+  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState<FinishingCategory | 'all'>('all');
+  const [showInactive, setShowInactive] = useState(true);
+  const [editor, setEditor] = useState<{ key: number; id: number | null; initial: FinishingForm } | null>(null);
+  const [editorSeq, setEditorSeq] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState<FinishingService | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  const services = useMemo(() => data ?? [], [data]);
+
+  const grouped = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = services.filter((s) => {
+      if (!showInactive && !s.isActive) return false;
+      if (category !== 'all' && s.category !== category) return false;
+      if (q && !s.name.toLowerCase().includes(q) && !s.code.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    return CATEGORIES.map((c) => ({
+      category: c,
+      items: filtered.filter((s) => s.category === c).sort((a, b) => a.name.localeCompare(b.name, 'vi')),
+    })).filter((g) => g.items.length > 0);
+  }, [services, search, category, showInactive]);
+
+  const totalShown = grouped.reduce((n, g) => n + g.items.length, 0);
+  const activeCount = services.filter((s) => s.isActive).length;
+
+  const openEditor = (id: number | null, initial: FinishingForm) => {
+    const key = editorSeq + 1;
+    setEditorSeq(key);
+    setEditor({ key, id, initial });
+  };
+  const openAdd = () => openEditor(null, { ...EMPTY_FORM, category: category === 'all' ? EMPTY_FORM.category : category });
+  const openEdit = (s: FinishingService) => openEditor(s.id, toForm(s));
+
+  const toggleActive = async (s: FinishingService) => {
+    setBusyId(s.id);
     try {
-      const res = await fetch(`/api/finishing?id=${id}`, { method: 'DELETE' });
-      if (res.ok) fetchServices();
+      await api(`/api/finishing/${s.id}`, { method: 'PUT', body: { ...toForm(s), isActive: !s.isActive } });
+      setData((prev) => prev?.map((x) => (x.id === s.id ? { ...x, isActive: !s.isActive } : x)));
+      toast.success(s.isActive ? `Đã ngưng “${s.name}”.` : `Đã bật lại “${s.name}”.`);
     } catch (err) {
-      console.error(err);
+      toast.error(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const doDelete = async () => {
+    if (!confirmDelete) return;
+    const target = confirmDelete;
+    setDeleting(true);
+    try {
+      await api(`/api/finishing/${target.id}`, { method: 'DELETE' });
+      setData((prev) => prev?.filter((x) => x.id !== target.id));
+      toast.success(`Đã xoá “${target.name}”.`);
+      setConfirmDelete(null);
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setDeleting(false);
     }
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-        <div>
-          <h2 className="text-base font-bold text-slate-800">Bảng Giá Gia Công Sau In (Post-Press)</h2>
-          <p className="text-xs text-slate-500">Cán màng, cấn, bế demi/đứt, ép kim, dập nổi, UV định hình, đóng ghim, dán hộp...</p>
-        </div>
-        <button
-          onClick={handleOpenAdd}
-          className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Thêm Công Đoạn
-        </button>
-      </div>
+      <PageHeader
+        title="Gia công sau in"
+        description="Cán màng, cấn gấp, bế, ép kim, phủ UV, đóng cuốn, dán hộp… – đơn giá dùng cho màn hình tính giá."
+        actions={
+          <>
+            <Button icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
+              Tải lại
+            </Button>
+            <Button variant="primary" icon={<Plus className="w-4 h-4" />} onClick={openAdd}>
+              Thêm dịch vụ
+            </Button>
+          </>
+        }
+      />
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase">
-              <tr>
-                <th className="py-3 px-4">Tên Công Đoạn</th>
-                <th className="py-3 px-4 text-center">Phân Loại</th>
-                <th className="py-3 px-4 text-center">Cách Tính</th>
-                <th className="py-3 px-4 text-right">Đơn Giá</th>
-                <th className="py-3 px-4 text-right">Mở Máy Min</th>
-                <th className="py-3 px-4 text-right">Tiền Khuôn</th>
-                <th className="py-3 px-4 text-center">Bù Hao</th>
-                <th className="py-3 px-4 text-right">Thao Tác</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {loading ? (
+      <Card bodyClassName="p-3 sm:p-4">
+        <div className="flex flex-col md:flex-row md:items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <TextInput
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm theo tên hoặc mã…"
+              className="pl-8"
+              aria-label="Tìm dịch vụ"
+            />
+          </div>
+          <Select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as FinishingCategory | 'all')}
+            className="md:w-56"
+            aria-label="Lọc theo nhóm"
+          >
+            <option value="all">Tất cả nhóm</option>
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {FINISHING_CATEGORY_LABELS[c]}
+              </option>
+            ))}
+          </Select>
+          <Checkbox checked={showInactive} onChange={setShowInactive} label="Hiện cả dịch vụ đã ngưng" />
+        </div>
+        {data && (
+          <p className="text-xs text-slate-500 mt-2">
+            {formatNumber(services.length)} dịch vụ · {formatNumber(activeCount)} đang dùng
+            {totalShown !== services.length && ` · đang hiển thị ${formatNumber(totalShown)}`}
+          </p>
+        )}
+      </Card>
+
+      {error && (
+        <Alert tone="error" title="Không tải được danh sách gia công">
+          {error}{' '}
+          <button type="button" className="underline font-medium" onClick={reload}>
+            Thử lại
+          </button>
+        </Alert>
+      )}
+
+      {!data ? (
+        loading && (
+          <Card>
+            <LoadingBlock text="Đang tải bảng giá gia công…" />
+          </Card>
+        )
+      ) : grouped.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={<Scissors className="w-10 h-10" />}
+            title={services.length === 0 ? 'Chưa có dịch vụ gia công nào' : 'Không có dịch vụ phù hợp bộ lọc'}
+            description={services.length === 0 ? 'Thêm dịch vụ đầu tiên để dùng khi tính giá.' : 'Thử đổi từ khoá, nhóm hoặc bật “Hiện cả dịch vụ đã ngưng”.'}
+            action={
+              services.length === 0 ? (
+                <Button variant="primary" icon={<Plus className="w-4 h-4" />} onClick={openAdd}>
+                  Thêm dịch vụ
+                </Button>
+              ) : undefined
+            }
+          />
+        </Card>
+      ) : (
+        grouped.map((g) => (
+          <Card
+            key={g.category}
+            title={FINISHING_CATEGORY_LABELS[g.category]}
+            icon={<Scissors className="w-4 h-4 text-blue-600" />}
+            actions={<Badge tone="slate">{g.items.length}</Badge>}
+            bodyClassName="p-0"
+          >
+            <Table>
+              <thead>
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-400">
-                    <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-500 mb-1" />
-                    Đang tải dữ liệu gia công...
-                  </td>
+                  <th className={th}>Tên dịch vụ</th>
+                  <th className={th}>Mã</th>
+                  <th className={th}>Cách tính</th>
+                  <th className={cn(th, 'text-right')}>Đơn giá</th>
+                  <th className={cn(th, 'text-right')}>Tối thiểu</th>
+                  <th className={cn(th, 'text-right')}>Tiền khuôn</th>
+                  <th className={cn(th, 'text-center')} title="Chỉ áp dụng in offset">
+                    Bù hao
+                  </th>
+                  <th className={cn(th, 'text-center')}>Trạng thái</th>
+                  <th className={cn(th, 'text-right')}>Thao tác</th>
                 </tr>
-              ) : (
-                services.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-2.5 px-4 font-bold text-slate-900">{s.name}</td>
-                    <td className="py-2.5 px-4 text-center">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 uppercase">
-                        {s.category}
-                      </span>
+              </thead>
+              <tbody>
+                {g.items.map((s) => (
+                  <tr key={s.id} className={cn('hover:bg-slate-50/70 transition-colors', !s.isActive && 'opacity-60')}>
+                    <td className={cn(td, 'font-medium text-slate-900 min-w-44')}>{s.name}</td>
+                    <td className={cn(td, 'font-mono text-xs text-slate-500 whitespace-nowrap')}>{s.code}</td>
+                    <td className={cn(td, 'whitespace-nowrap')}>
+                      <Badge tone={CALC_TONE[s.calcType]}>{FINISHING_CALC_LABELS[s.calcType]}</Badge>
                     </td>
-                    <td className="py-2.5 px-4 text-center text-slate-500">
-                      {s.calcType === 'per_m2' ? 'Theo m²' :
-                       s.calcType === 'die_cut' ? 'Khuôn + Công bế' :
-                       s.calcType === 'per_sheet' ? 'Theo tờ in' :
-                       s.calcType === 'fixed' ? 'Cố định' : 'Theo cái'}
+                    <td className={cn(td, 'text-right tabular-nums whitespace-nowrap font-semibold text-slate-800')}>{priceLabel(s)}</td>
+                    <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>
+                      {s.calcType === 'fixed' || s.minPrice <= 0 ? <span className="text-slate-300">—</span> : formatVnd(s.minPrice)}
                     </td>
-                    <td className="py-2.5 px-4 text-right font-semibold text-blue-700">
-                      {s.unitPrice.toLocaleString('vi-VN')}đ
+                    <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>
+                      {s.setupFee > 0 ? formatVnd(s.setupFee) : <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="py-2.5 px-4 text-right text-slate-600">
-                      {s.minPrice > 0 ? `${s.minPrice.toLocaleString('vi-VN')}đ` : '-'}
+                    <td className={cn(td, 'text-center tabular-nums whitespace-nowrap text-xs')}>
+                      {s.wastePercent > 0 || s.wasteSheets > 0 ? (
+                        <span title="Chỉ áp dụng in offset">
+                          {formatNumber(s.wastePercent, true)}% + {formatNumber(s.wasteSheets)} tờ
+                        </span>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
-                    <td className="py-2.5 px-4 text-right font-medium text-amber-700">
-                      {s.setupFee > 0 ? `${s.setupFee.toLocaleString('vi-VN')}đ` : '-'}
+                    <td className={cn(td, 'text-center')}>
+                      {s.isActive ? <Badge tone="green">Đang dùng</Badge> : <Badge tone="slate">Ngưng</Badge>}
                     </td>
-                    <td className="py-2.5 px-4 text-center text-slate-500">
-                      +{s.wastePercent}% ({s.wasteSheets} tờ)
-                    </td>
-                    <td className="py-2.5 px-4 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => handleOpenEdit(s)}
-                          className="p-1.5 text-slate-500 hover:text-blue-600 rounded hover:bg-slate-100"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(s.id)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                    <td className={cn(td, 'text-right whitespace-nowrap')}>
+                      <div className="inline-flex items-center gap-0.5">
+                        <IconButton label="Sửa" onClick={() => openEdit(s)}>
+                          <Edit2 className="w-4 h-4" />
+                        </IconButton>
+                        <IconButton label={s.isActive ? 'Ngưng sử dụng' : 'Bật lại'} onClick={() => toggleActive(s)} disabled={busyId === s.id}>
+                          {s.isActive ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </IconButton>
+                        <IconButton label="Xoá" tone="danger" onClick={() => setConfirmDelete(s)}>
+                          <Trash2 className="w-4 h-4" />
+                        </IconButton>
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Modal Thêm/Sửa */}
-      {isModalOpen && editingService && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <h3 className="font-bold text-sm">
-                {editingService.id ? 'Cập Nhật Công Đoạn Gia Công' : 'Thêm Mới Công Đoạn'}
-              </h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} className="p-5 space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-600 font-medium mb-1">Tên Công Đoạn Gia Công *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingService.name || ''}
-                  onChange={(e) => setEditingService({ ...editingService, name: e.target.value })}
-                  className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Phân Loại *</label>
-                  <select
-                    value={editingService.category || 'can_mang'}
-                    onChange={(e) => setEditingService({ ...editingService, category: e.target.value as FinishingService['category'] })}
-                    className="w-full border border-slate-300 rounded-lg p-2 bg-white"
-                  >
-                    <option value="can_mang">Cán màng</option>
-                    <option value="can_gap">Cấn & Gấp</option>
-                    <option value="be">Cắt bế khuôn</option>
-                    <option value="ep_kim">Ép kim / Dập nổi</option>
-                    <option value="phu_uv">Phủ UV</option>
-                    <option value="dong_cuon">Đóng cuốn / Gáy</option>
-                    <option value="dan">Dán thành phẩm</option>
-                    <option value="khac">Khác</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Phương Thức Tính *</label>
-                  <select
-                    value={editingService.calcType || 'per_product'}
-                    onChange={(e) => setEditingService({ ...editingService, calcType: e.target.value as FinishingService['calcType'] })}
-                    className="w-full border border-slate-300 rounded-lg p-2 bg-white"
-                  >
-                    <option value="per_product">Theo cái (con)</option>
-                    <option value="per_m2">Theo diện tích (m²)</option>
-                    <option value="die_cut">Khuôn + Lượt bế</option>
-                    <option value="per_sheet">Theo tờ in</option>
-                    <option value="fixed">Cố định</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Đơn Giá (VNĐ) *</label>
-                  <input
-                    type="number"
-                    required
-                    value={editingService.unitPrice || 0}
-                    onChange={(e) => setEditingService({ ...editingService, unitPrice: Number(e.target.value) })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Mở Máy Min</label>
-                  <input
-                    type="number"
-                    value={editingService.minPrice || 0}
-                    onChange={(e) => setEditingService({ ...editingService, minPrice: Number(e.target.value) })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Tiền Khuôn</label>
-                  <input
-                    type="number"
-                    value={editingService.setupFee || 0}
-                    onChange={(e) => setEditingService({ ...editingService, setupFee: Number(e.target.value) })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Bù Hao (%)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={editingService.wastePercent || 0}
-                    onChange={(e) => setEditingService({ ...editingService, wastePercent: Number(e.target.value) })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Bù Hao Cố Định (tờ)</label>
-                  <input
-                    type="number"
-                    value={editingService.wasteSheets || 0}
-                    onChange={(e) => setEditingService({ ...editingService, wasteSheets: Number(e.target.value) })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700"
-                >
-                  Lưu Dịch Vụ
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+                ))}
+              </tbody>
+            </Table>
+          </Card>
+        ))
       )}
+
+      {editor && (
+        <FinishingFormModal
+          key={editor.key}
+          initial={editor.initial}
+          editingId={editor.id}
+          onClose={() => setEditor(null)}
+          onSaved={() => {
+            setEditor(null);
+            reload();
+          }}
+        />
+      )}
+
+      <Modal
+        open={confirmDelete !== null}
+        onClose={() => !deleting && setConfirmDelete(null)}
+        size="sm"
+        title="Xoá dịch vụ gia công?"
+        footer={
+          <>
+            <Button onClick={() => setConfirmDelete(null)} disabled={deleting}>
+              Huỷ
+            </Button>
+            <Button variant="danger" icon={<Trash2 className="w-4 h-4" />} loading={deleting} onClick={doDelete}>
+              Xoá
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-700">
+          Bạn có chắc muốn xoá <span className="font-semibold">“{confirmDelete?.name}”</span> ({confirmDelete?.code})? Thao tác này không thể hoàn tác.
+        </p>
+        <p className="text-xs text-slate-500 mt-2">Nếu chỉ muốn tạm ẩn khỏi màn hình tính giá, hãy dùng “Ngưng sử dụng”.</p>
+      </Modal>
     </div>
   );
-};
+}

@@ -1,95 +1,131 @@
 'use client';
 
 import React from 'react';
-import { ComparisonItem } from '@/types';
-import { Zap, CheckCircle2, TrendingDown } from 'lucide-react';
+import type { CalculationResult, ChosenTech } from '@/types';
+import { formatNumber, formatVnd, formatVndShort } from '@/lib/format';
+import { cn } from './ui';
 
-interface BreakEvenChartProps {
-  currentQty: number;
-  chosenTech: 'offset' | 'digital';
-  comparisonTable?: ComparisonItem[];
-  breakEvenQty?: number;
-  reason?: string;
-}
+type Rec = CalculationResult['recommendation'];
 
-export const BreakEvenChart: React.FC<BreakEvenChartProps> = ({
-  currentQty,
-  chosenTech,
-  comparisonTable = [],
-  breakEvenQty = 300,
-  reason,
-}) => {
-  if (!comparisonTable || comparisonTable.length === 0) return null;
+const W = 420;
+const H = 220;
+const PAD = { l: 44, r: 12, t: 12, b: 28 };
 
-  const maxPrice = Math.max(...comparisonTable.map((c) => Math.max(c.digitalTotal, c.offsetTotal)));
+export function BreakEvenChart({ recommendation, currentQty, chosenTech, unit }: { recommendation: Rec; currentQty: number; chosenTech: ChosenTech; unit: string }) {
+  const rows = recommendation.comparisonTable;
+  if (rows.length === 0) return <p className="text-sm text-slate-500">Không có dữ liệu so sánh.</p>;
+
+  // Trục Y logarit theo đơn giá / sản phẩm
+  const values = rows.flatMap((r) => [r.digitalUnit, r.offsetUnit]).filter((v): v is number => v !== null && v > 0);
+  const minV = Math.max(1, Math.min(...values));
+  const maxV = Math.max(...values, minV * 2);
+  const lo = Math.log10(minV * 0.8);
+  const hi = Math.log10(maxV * 1.2);
+  const x = (i: number) => PAD.l + (rows.length === 1 ? 0.5 : i / (rows.length - 1)) * (W - PAD.l - PAD.r);
+  const y = (v: number) => PAD.t + (1 - (Math.log10(v) - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
+
+  const ticks: number[] = [];
+  for (let e = Math.floor(lo); e <= Math.ceil(hi); e++) {
+    for (const m of [1, 2, 5]) {
+      const v = m * 10 ** e;
+      if (Math.log10(v) >= lo && Math.log10(v) <= hi) ticks.push(v);
+    }
+  }
+
+  const path = (key: 'digitalUnit' | 'offsetUnit') => {
+    let d = '';
+    let pen = false;
+    rows.forEach((r, i) => {
+      const v = r[key];
+      if (v === null || v <= 0) {
+        pen = false;
+        return;
+      }
+      d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)} `;
+      pen = true;
+    });
+    return d.trim();
+  };
+
+  const curIdx = rows.findIndex((r) => r.quantity === currentQty);
 
   return (
     <div className="space-y-3">
-      {/* Khuyến nghị ngắn gọn */}
-      {reason && (
-        <div className="p-3 bg-blue-50 border border-blue-200/80 rounded-xl text-xs text-blue-900 flex items-start gap-2">
-          <Zap className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-          <div className="leading-relaxed font-medium">
-            {reason}
-          </div>
-        </div>
+      <p className="text-sm text-slate-700 leading-relaxed">{recommendation.reason}</p>
+      {recommendation.breakEvenQty !== null ? (
+        <p className="text-xs text-slate-600">
+          Điểm hoà vốn: từ khoảng <strong className="text-indigo-700">{formatNumber(recommendation.breakEvenQty)} {unit}</strong> trở lên in offset rẻ hơn in nhanh.
+        </p>
+      ) : (
+        <p className="text-xs text-slate-500">Không có điểm giao giữa 2 công nghệ trong khoảng số lượng khảo sát.</p>
       )}
 
-      {/* Biểu đồ cột tinh giản */}
-      <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5">
-        <div className="flex items-center justify-between text-[11px] text-slate-500 mb-2 pb-1.5 border-b border-slate-200/60">
-          <span className="font-semibold text-slate-700">So sánh chi phí theo số lượng</span>
-          <div className="flex items-center gap-3 font-medium">
-            <span className="flex items-center gap-1 text-sky-600">
-              <span className="w-2 h-2 rounded-full bg-sky-500 inline-block" /> In Nhanh KTS
-            </span>
-            <span className="flex items-center gap-1 text-indigo-600">
-              <span className="w-2 h-2 rounded-full bg-indigo-600 inline-block" /> In Offset
-            </span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 items-end h-[120px] pt-2 pb-1">
-          {comparisonTable.map((item) => {
-            const digHeight = Math.max(8, Math.round((item.digitalTotal / maxPrice) * 95));
-            const offHeight = Math.max(8, Math.round((item.offsetTotal / maxPrice) * 95));
-            const isCurrent = item.quantity === currentQty;
-
-            return (
-              <div key={item.quantity} className="flex flex-col items-center gap-1 group relative">
-                {/* Tooltip */}
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-10 z-20 bg-slate-900 text-white text-[10px] rounded py-0.5 px-1.5 pointer-events-none whitespace-nowrap shadow">
-                  KTS: {item.digitalTotal.toLocaleString('vi-VN')}đ | Offset: {item.offsetTotal.toLocaleString('vi-VN')}đ
-                </div>
-
-                <div className="flex items-end gap-1 w-full justify-center">
-                  <div
-                    style={{ height: `${digHeight}px` }}
-                    className={`w-3 sm:w-3.5 rounded-t transition-all ${
-                      item.recommended === 'digital' ? 'bg-sky-500' : 'bg-sky-200'
-                    }`}
-                  />
-                  <div
-                    style={{ height: `${offHeight}px` }}
-                    className={`w-3 sm:w-3.5 rounded-t transition-all ${
-                      item.recommended === 'offset' ? 'bg-indigo-600' : 'bg-indigo-200'
-                    }`}
-                  />
-                </div>
-
-                <span className={`text-[10px] ${isCurrent ? 'font-black text-blue-700' : 'text-slate-400 font-medium'}`}>
-                  {item.quantity >= 1000 ? `${item.quantity / 1000}k` : item.quantity}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-500">
-          <span>Điểm chuyển giao hòa vốn:</span>
-          <strong className="text-slate-800 font-semibold">~{breakEvenQty.toLocaleString('vi-VN')} chiếc</strong>
-        </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Biểu đồ đơn giá theo số lượng">
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={PAD.l} x2={W - PAD.r} y1={y(t)} y2={y(t)} stroke="#e2e8f0" strokeWidth={1} />
+            <text x={PAD.l - 4} y={y(t)} fontSize={9} textAnchor="end" dominantBaseline="central" fill="#64748b">
+              {formatVndShort(t)}
+            </text>
+          </g>
+        ))}
+        {curIdx >= 0 && <line x1={x(curIdx)} x2={x(curIdx)} y1={PAD.t} y2={H - PAD.b} stroke="#94a3b8" strokeDasharray="3 3" />}
+        <path d={path('digitalUnit')} fill="none" stroke="#0284c7" strokeWidth={2.2} />
+        <path d={path('offsetUnit')} fill="none" stroke="#4f46e5" strokeWidth={2.2} />
+        {rows.map((r, i) => (
+          <g key={r.quantity}>
+            {r.digitalUnit !== null && r.digitalUnit > 0 && <circle cx={x(i)} cy={y(r.digitalUnit)} r={i === curIdx ? 4 : 2.6} fill="#0284c7" />}
+            {r.offsetUnit !== null && r.offsetUnit > 0 && <circle cx={x(i)} cy={y(r.offsetUnit)} r={i === curIdx ? 4 : 2.6} fill="#4f46e5" />}
+            <text x={x(i)} y={H - PAD.b + 14} fontSize={9} textAnchor="middle" fill={i === curIdx ? '#0f172a' : '#64748b'} fontWeight={i === curIdx ? 700 : 400}>
+              {r.quantity >= 1000 ? `${formatNumber(r.quantity / 1000, true)}k` : r.quantity}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <div className="flex items-center gap-4 text-[11px] text-slate-600">
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-0.5 bg-sky-600 inline-block" /> In nhanh (đ/{unit})</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-0.5 bg-indigo-600 inline-block" /> Offset (đ/{unit})</span>
       </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-200">
+              <th className="text-left py-1.5 font-semibold">Số lượng</th>
+              <th className="text-right py-1.5 font-semibold">In nhanh</th>
+              <th className="text-right py-1.5 font-semibold">Offset</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.quantity} className={cn('border-b border-slate-100', r.quantity === currentQty && 'bg-blue-50/60 font-semibold')}>
+                <td className="py-1.5">
+                  {formatNumber(r.quantity)}
+                  {r.quantity === currentQty && <span className="ml-1 text-[10px] text-blue-600">(hiện tại · {chosenTech === 'offset' ? 'offset' : 'in nhanh'})</span>}
+                </td>
+                <Cell total={r.digitalTotal} unitPrice={r.digitalUnit} best={r.recommended === 'digital'} />
+                <Cell total={r.offsetTotal} unitPrice={r.offsetUnit} best={r.recommended === 'offset'} />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {(recommendation.digitalError || recommendation.offsetError) && (
+        <p className="text-[11px] text-slate-500">
+          {recommendation.digitalError && <>In nhanh: {recommendation.digitalError} </>}
+          {recommendation.offsetError && <>Offset: {recommendation.offsetError}</>}
+        </p>
+      )}
     </div>
   );
-};
+}
+
+function Cell({ total, unitPrice, best }: { total: number | null; unitPrice: number | null; best: boolean }) {
+  if (total === null) return <td className="py-1.5 text-right text-slate-400">Không khả thi</td>;
+  return (
+    <td className={cn('py-1.5 text-right tabular-nums', best ? 'text-emerald-700 font-semibold' : 'text-slate-700')}>
+      {formatVnd(total)}
+      <span className="block text-[10px] text-slate-500 font-normal">{formatVnd(unitPrice)}/sp</span>
+    </td>
+  );
+}

@@ -1,596 +1,591 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { PaperType } from '@/types';
-import { Plus, Edit2, Trash2, Check, X, RefreshCw, Search, Building2, Filter, RotateCcw } from 'lucide-react';
+// =============================================================================
+// Kho giá giấy – danh sách, lọc, thêm / sửa / ẩn / xoá loại giấy
+// =============================================================================
 
-export const PaperManager: React.FC = () => {
-  const [papers, setPapers] = useState<PaperType[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingPaper, setEditingPaper] = useState<Partial<PaperType> | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+import React, { useId, useMemo, useState } from 'react';
+import { Eye, EyeOff, Layers, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import type { PaperType } from '@/types';
+import { ApiError, api, errorMessage, useApi, useDebounced } from '@/lib/client';
+import { formatNumber, formatVnd } from '@/lib/format';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  EmptyState,
+  Field,
+  IconButton,
+  LoadingBlock,
+  Modal,
+  NumberInput,
+  PageHeader,
+  Select,
+  Table,
+  TextInput,
+  Textarea,
+  cn,
+  td,
+  th,
+  useToast,
+} from '@/components/ui';
 
-  // Search & Filter State
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedSupplier, setSelectedSupplier] = useState<string>('all');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+// -----------------------------------------------------------------------------
+// Tiện ích
+// -----------------------------------------------------------------------------
 
-  const fetchPapers = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch('/api/papers');
-      const data = await res.json();
-      if (Array.isArray(data)) setPapers(data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
+type PaperForm = Omit<PaperType, 'id'>;
+type PaperField = keyof PaperForm;
+type FieldErrors = Partial<Record<PaperField, string>>;
+
+const DEFAULT_SUPPLIER = 'Thuận Phát';
+
+const EMPTY_FORM: PaperForm = {
+  code: '',
+  name: '',
+  gsm: 150,
+  parentWidthCm: 65,
+  parentHeightCm: 86,
+  priceAbove500: 0,
+  priceBelow500: 0,
+  supplier: DEFAULT_SUPPLIER,
+  description: '',
+  isActive: true,
+};
+
+/** Nhãn trường đúng như thông báo lỗi của server (src/lib/validation.ts – parsePaper) */
+const FIELD_LABELS: Partial<Record<PaperField, string>> = {
+  code: 'Mã giấy',
+  name: 'Tên giấy',
+  gsm: 'Định lượng',
+  parentWidthCm: 'Khổ mẹ (rộng)',
+  parentHeightCm: 'Khổ mẹ (dài)',
+  priceAbove500: 'Giá từ 500 tờ',
+  priceBelow500: 'Giá dưới 500 tờ',
+  supplier: 'Nhà cung cấp',
+  description: 'Mô tả',
+};
+
+/** Gán từng lỗi chi tiết của server vào trường tương ứng; phần còn lại là lỗi chung */
+function splitErrors(err: unknown): { general: string[]; fields: FieldErrors } {
+  const fields: FieldErrors = {};
+  const general: string[] = [];
+  const hasDetails = err instanceof ApiError && !!err.details && err.details.length > 0;
+  const messages = hasDetails && err instanceof ApiError && err.details ? err.details : [errorMessage(err)];
+  // Nhãn dài khớp trước để tránh nhầm nhãn con
+  const labels = (Object.entries(FIELD_LABELS) as [PaperField, string][]).sort((a, b) => b[1].length - a[1].length);
+  for (const msg of messages) {
+    const hit = labels.find(([, label]) => msg.toLowerCase().includes(label.toLowerCase()));
+    if (hit && !fields[hit[0]]) fields[hit[0]] = msg;
+    else general.push(msg);
+  }
+  if (hasDetails) general.unshift(errorMessage(err));
+  return { general: Array.from(new Set(general)), fields };
+}
+
+const GROUPS: { value: string; label: string }[] = [
+  { value: 'C', label: 'Couche' },
+  { value: 'I', label: 'Ivory' },
+  { value: 'F', label: 'Fort' },
+  { value: 'B', label: 'Bristol' },
+  { value: 'D', label: 'Duplex' },
+  { value: 'other', label: 'Khác' },
+];
+
+function groupOf(code: string): string {
+  const c = code.trim().charAt(0).toUpperCase();
+  return ['C', 'I', 'F', 'B', 'D'].includes(c) ? c : 'other';
+}
+
+const GROUP_TONES: Record<string, 'blue' | 'amber' | 'green' | 'purple' | 'teal' | 'slate'> = {
+  C: 'blue',
+  I: 'amber',
+  F: 'green',
+  B: 'purple',
+  D: 'teal',
+  other: 'slate',
+};
+
+const sizeKey = (p: Pick<PaperType, 'parentWidthCm' | 'parentHeightCm'>) =>
+  `${formatNumber(p.parentWidthCm, true)}×${formatNumber(p.parentHeightCm, true)}`;
+
+const toForm = (p: PaperType): PaperForm => ({
+  code: p.code,
+  name: p.name,
+  gsm: p.gsm,
+  parentWidthCm: p.parentWidthCm,
+  parentHeightCm: p.parentHeightCm,
+  priceAbove500: p.priceAbove500,
+  priceBelow500: p.priceBelow500,
+  supplier: p.supplier,
+  description: p.description,
+  isActive: p.isActive,
+});
+
+// -----------------------------------------------------------------------------
+// Thành phần chính
+// -----------------------------------------------------------------------------
+
+export function PaperManager() {
+  const toast = useToast();
+  const { data, error, loading, reload } = useApi<PaperType[]>('/api/papers');
+  const papers = useMemo(() => data ?? [], [data]);
+
+  const [search, setSearch] = useState('');
+  const query = useDebounced(search.trim().toLowerCase(), 250);
+  const [group, setGroup] = useState('all');
+  const [supplier, setSupplier] = useState('all');
+  const [size, setSize] = useState('all');
+  const [showInactive, setShowInactive] = useState(false);
+
+  const [editor, setEditor] = useState<{ id: number | null; form: PaperForm } | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  const suppliers = useMemo(
+    () => Array.from(new Set(papers.map((p) => p.supplier || DEFAULT_SUPPLIER))).sort((a, b) => a.localeCompare(b, 'vi')),
+    [papers]
+  );
+
+  const sizes = useMemo(() => {
+    const map = new Map<string, { key: string; w: number; h: number; count: number }>();
+    for (const p of papers) {
+      const key = sizeKey(p);
+      const cur = map.get(key);
+      if (cur) cur.count += 1;
+      else map.set(key, { key, w: p.parentWidthCm, h: p.parentHeightCm, count: 1 });
     }
-  };
-
-  useEffect(() => {
-    fetchPapers();
-  }, []);
-
-  // Unique suppliers
-  const suppliers = useMemo(() => {
-    const list = Array.from(new Set(papers.map((p) => p.supplier || 'Thuận Phát'))).filter(Boolean);
-    return list.sort();
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }, [papers]);
 
-  // Categories helper
-  const getCategory = (p: PaperType): string => {
-    const name = p.name.toLowerCase();
-    const code = p.code.toLowerCase();
-    if (name.includes('ivory') || code.startsWith('i')) return 'Ivory';
-    if (name.includes('couche') || code.startsWith('c')) return 'Couche';
-    if (name.includes('fort') || name.includes('ford') || code.startsWith('f')) return 'Fort';
-    if (name.includes('duplex') || code.startsWith('d')) return 'Duplex';
-    if (name.includes('bristol') || code.startsWith('b')) return 'Bristol';
-    if (name.includes('decal')) return 'Decal';
-    if (name.includes('kraft')) return 'Kraft';
-    return 'Khác';
-  };
+  const filtered = useMemo(
+    () =>
+      papers.filter((p) => {
+        if (!showInactive && !p.isActive) return false;
+        if (group !== 'all' && groupOf(p.code) !== group) return false;
+        if (supplier !== 'all' && (p.supplier || DEFAULT_SUPPLIER) !== supplier) return false;
+        if (size !== 'all' && sizeKey(p) !== size) return false;
+        if (query) {
+          const hay = `${p.code} ${p.name} ${p.description} ${p.gsm}`.toLowerCase();
+          if (!hay.includes(query)) return false;
+        }
+        return true;
+      }),
+    [papers, showInactive, group, supplier, size, query]
+  );
 
-  const categories = ['Ivory', 'Couche', 'Fort', 'Duplex', 'Bristol', 'Decal', 'Kraft', 'Khác'];
-
-  // Filtered papers
-  const filteredPapers = useMemo(() => {
-    return papers.filter((p) => {
-      // Supplier filter
-      if (selectedSupplier !== 'all') {
-        const supp = p.supplier || 'Thuận Phát';
-        if (supp !== selectedSupplier) return false;
-      }
-
-      // Category filter
-      if (selectedCategory !== 'all') {
-        if (getCategory(p) !== selectedCategory) return false;
-      }
-
-      // Text search
-      if (searchTerm.trim()) {
-        const query = searchTerm.toLowerCase();
-        const matchName = p.name.toLowerCase().includes(query);
-        const matchCode = p.code.toLowerCase().includes(query);
-        const matchDesc = (p.description || '').toLowerCase().includes(query);
-        const matchSupp = (p.supplier || '').toLowerCase().includes(query);
-        const matchGsm = p.gsm.toString().includes(query);
-        if (!matchName && !matchCode && !matchDesc && !matchSupp && !matchGsm) return false;
-      }
-
-      return true;
-    });
-  }, [papers, selectedSupplier, selectedCategory, searchTerm]);
-
-  const handleOpenAdd = () => {
-    setEditingPaper({
-      supplier: 'Thuận Phát',
-      code: `C_${Date.now().toString().slice(-4)}`,
-      name: 'Couche ',
-      gsm: 150,
-      parentWidthCm: 65,
-      parentHeightCm: 86,
-      priceAbove500: 500000,
-      priceBelow500: 530000,
-      pricePerRam: 500000,
-      unit: 'ram',
-      description: '',
-      isActive: true,
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleOpenEdit = (p: PaperType) => {
-    setEditingPaper({
-      ...p,
-      supplier: p.supplier || 'Thuận Phát',
-      priceAbove500: p.priceAbove500 || p.pricePerRam || 0,
-      priceBelow500: p.priceBelow500 || p.pricePerRam || 0,
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingPaper) return;
-
-    const isUpdate = Boolean(editingPaper.id);
-    const method = isUpdate ? 'PUT' : 'POST';
-
-    // Normalize prices: keep pricePerRam synced with priceAbove500
-    const payload = {
-      ...editingPaper,
-      pricePerRam: editingPaper.priceAbove500 || 0,
-    };
-
-    try {
-      const res = await fetch('/api/papers', {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        setIsModalOpen(false);
-        setEditingPaper(null);
-        fetchPapers();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Có lỗi xảy ra khi lưu giấy!');
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Không thể kết nối đến máy chủ.');
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa loại giấy này?')) return;
-    try {
-      const res = await fetch(`/api/papers?id=${id}`, { method: 'DELETE' });
-      if (res.ok) fetchPapers();
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const activeCount = papers.filter((p) => p.isActive).length;
+  const hasFilter = search !== '' || group !== 'all' || supplier !== 'all' || size !== 'all';
 
   const resetFilters = () => {
-    setSearchTerm('');
-    setSelectedSupplier('all');
-    setSelectedCategory('all');
+    setSearch('');
+    setGroup('all');
+    setSupplier('all');
+    setSize('all');
   };
 
+  const toggleActive = async (p: PaperType) => {
+    setBusyId(p.id);
+    try {
+      await api(`/api/papers/${p.id}`, { method: 'PUT', body: { ...toForm(p), isActive: !p.isActive } });
+      toast.success(p.isActive ? `Đã ẩn giấy ${p.code}.` : `Đã kích hoạt lại giấy ${p.code}.`);
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async (p: PaperType) => {
+    if (!window.confirm(`Xoá vĩnh viễn giấy "${p.code} – ${p.name}"?\nNếu chỉ muốn tạm ngừng sử dụng, hãy chọn "Ẩn" thay vì xoá.`)) return;
+    setBusyId(p.id);
+    try {
+      await api(`/api/papers/${p.id}`, { method: 'DELETE' });
+      toast.success(`Đã xoá giấy ${p.code}.`);
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const addButton = (
+    <Button variant="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setEditor({ id: null, form: EMPTY_FORM })}>
+      Thêm giấy
+    </Button>
+  );
+
   return (
-    <div className="space-y-4">
-      {/* Header & Quick stats */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-        <div>
-          <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-            <Building2 className="w-5 h-5 text-blue-600" />
-            Kho Bảng Giá Giấy In & Nhà Cung Cấp
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Quản lý báo giá theo mức &ge; 500 tờ (trên ram) và &lt; 500 tờ (dưới ram). Đã phân chia rõ từng Nhà Cung Cấp (NCC).
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={fetchPapers}
-            className="p-2 border border-slate-200 text-slate-600 hover:text-blue-600 rounded-lg text-xs font-semibold hover:bg-slate-50 transition-colors"
-            title="Tải lại dữ liệu"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-600' : ''}`} />
-          </button>
-          <button
-            onClick={handleOpenAdd}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow transition-colors whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4" />
-            Thêm Loại Giấy Mới
-          </button>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        title="Kho giá giấy"
+        description={
+          data
+            ? `${formatNumber(papers.length)} loại giấy · ${formatNumber(activeCount)} đang dùng · giá tính theo ram 500 tờ khổ mẹ`
+            : 'Bảng giá giấy theo ram (500 tờ khổ mẹ)'
+        }
+        actions={
+          <>
+            <Button icon={<RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />} onClick={reload} disabled={loading}>
+              Tải lại
+            </Button>
+            {addButton}
+          </>
+        }
+      />
 
-      {/* Filter Bar */}
-      <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-          {/* Search box */}
-          <div className="md:col-span-6 relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Tìm theo tên giấy, mã giấy, hiệu (Ningbo, Nevia, Indo...), NCC..."
-              className="w-full pl-9 pr-8 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Supplier Filter */}
-          <div className="md:col-span-3 flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-500 shrink-0">NCC:</span>
-            <select
-              value={selectedSupplier}
-              onChange={(e) => setSelectedSupplier(e.target.value)}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium text-slate-700 focus:ring-1 focus:ring-blue-500"
-            >
-              <option value="all">Tất cả NCC ({suppliers.length})</option>
+      <Card bodyClassName="p-0">
+        {/* Bộ lọc */}
+        <div className="p-4 border-b border-slate-100 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_auto] items-end">
+          <Field label="Tìm kiếm">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <TextInput
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Mã, tên, mô tả, định lượng…"
+                className="pl-8"
+                aria-label="Tìm kiếm giấy"
+              />
+            </div>
+          </Field>
+          <Field label="Nhóm giấy">
+            <Select value={group} onChange={(e) => setGroup(e.target.value)} aria-label="Lọc theo nhóm giấy">
+              <option value="all">Tất cả nhóm</option>
+              {GROUPS.map((g) => (
+                <option key={g.value} value={g.value}>
+                  {g.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Nhà cung cấp">
+            <Select value={supplier} onChange={(e) => setSupplier(e.target.value)} aria-label="Lọc theo nhà cung cấp">
+              <option value="all">Tất cả NCC</option>
               {suppliers.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>
               ))}
-            </select>
-          </div>
-
-          {/* Category Filter */}
-          <div className="md:col-span-3 flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-500 shrink-0">Loại:</span>
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium text-slate-700 focus:ring-1 focus:ring-blue-500"
-            >
-              <option value="all">Tất cả loại giấy</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+            </Select>
+          </Field>
+          <Field label="Khổ mẹ (cm)">
+            <Select value={size} onChange={(e) => setSize(e.target.value)} aria-label="Lọc theo khổ mẹ">
+              <option value="all">Tất cả khổ</option>
+              {sizes.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.key} ({s.count})
                 </option>
               ))}
-            </select>
+            </Select>
+          </Field>
+          <div className="pb-2">
+            <Checkbox checked={showInactive} onChange={setShowInactive} label="Hiện giấy đã ẩn" />
           </div>
         </div>
 
-        {/* Filter Badges & Count */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500">
-              Hiển thị <strong className="text-blue-600">{filteredPapers.length}</strong> / {papers.length} loại giấy
-            </span>
-            {(searchTerm || selectedSupplier !== 'all' || selectedCategory !== 'all') && (
-              <button
-                onClick={resetFilters}
-                className="inline-flex items-center gap-1 text-[11px] text-rose-600 hover:text-rose-700 font-medium px-2 py-0.5 rounded bg-rose-50 hover:bg-rose-100 transition-colors"
-              >
-                <RotateCcw className="w-3 h-3" />
-                Xóa bộ lọc
+        {error && (
+          <div className="p-4">
+            <Alert tone="error" title="Không tải được danh sách giấy">
+              {error}{' '}
+              <button type="button" className="underline font-medium" onClick={reload}>
+                Thử lại
               </button>
-            )}
+            </Alert>
           </div>
+        )}
 
-          {/* Quick Category Pills */}
-          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 max-w-full">
-            {['all', 'Couche', 'Ivory', 'Fort', 'Duplex', 'Bristol'].map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-2 py-0.5 text-[11px] rounded-full font-medium transition-colors ${
-                  selectedCategory === cat
-                    ? 'bg-blue-600 text-white shadow-2xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {cat === 'all' ? 'Tất cả' : cat}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Main Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase">
-              <tr>
-                <th className="py-3 px-3 w-28">Nhà Cung Cấp</th>
-                <th className="py-3 px-3">Mã Giấy</th>
-                <th className="py-3 px-3">Tên Loại Giấy & Hiệu</th>
-                <th className="py-3 px-3 text-center">Định Lượng</th>
-                <th className="py-3 px-3 text-center">Khổ Mẹ</th>
-                <th className="py-3 px-3 text-right">
-                  <div>Giá &ge; 500 tờ</div>
-                  <div className="text-[10px] text-slate-400 font-normal">Nguyên ram</div>
-                </th>
-                <th className="py-3 px-3 text-right">
-                  <div>Giá &lt; 500 tờ</div>
-                  <div className="text-[10px] text-slate-400 font-normal">Bán lẻ</div>
-                </th>
-                <th className="py-3 px-3 text-center">Trạng Thái</th>
-                <th className="py-3 px-3 text-right">Thao Tác</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {loading ? (
+        {!data && loading ? (
+          <LoadingBlock text="Đang tải kho giấy…" />
+        ) : data && filtered.length === 0 ? (
+          <EmptyState
+            icon={<Layers className="w-10 h-10" />}
+            title={papers.length === 0 ? 'Chưa có loại giấy nào' : 'Không có giấy phù hợp bộ lọc'}
+            description={papers.length === 0 ? 'Thêm loại giấy đầu tiên để bắt đầu tính giá.' : 'Thử bỏ bớt điều kiện lọc hoặc bật "Hiện giấy đã ẩn".'}
+            action={papers.length === 0 ? addButton : hasFilter ? <Button onClick={resetFilters}>Xoá bộ lọc</Button> : undefined}
+          />
+        ) : data ? (
+          <>
+            <Table>
+              <thead>
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-slate-400">
-                    <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-500 mb-1" />
-                    Đang tải dữ liệu giấy...
-                  </td>
+                  <th className={th}>Mã</th>
+                  <th className={th}>Tên giấy</th>
+                  <th className={cn(th, 'text-right')}>gsm</th>
+                  <th className={cn(th, 'text-center')}>Khổ mẹ (cm)</th>
+                  <th className={cn(th, 'text-right')}>Giá ≥500 tờ /ram</th>
+                  <th className={cn(th, 'text-right')}>Giá &lt;500 tờ /ram</th>
+                  <th className={cn(th, 'text-right')}>Giá/tờ</th>
+                  <th className={th}>NCC</th>
+                  <th className={cn(th, 'text-center')}>Trạng thái</th>
+                  <th className={cn(th, 'text-right')}>Thao tác</th>
                 </tr>
-              ) : filteredPapers.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="py-8 text-center text-slate-400">
-                    Không tìm thấy loại giấy nào phù hợp với bộ lọc.
-                  </td>
-                </tr>
-              ) : (
-                filteredPapers.map((p) => {
-                  const priceAbove = p.priceAbove500 || p.pricePerRam || 0;
-                  const priceBelow = p.priceBelow500 || priceAbove;
-                  const unitPriceAbove = Math.round(priceAbove / 500);
-                  const unitPriceBelow = Math.round(priceBelow / 500);
-
+              </thead>
+              <tbody>
+                {filtered.map((p) => {
+                  const busy = busyId === p.id;
                   return (
-                    <tr key={p.id} className="hover:bg-blue-50/30 transition-colors">
-                      {/* NCC */}
-                      <td className="py-2.5 px-3">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                          {p.supplier || 'Thuận Phát'}
-                        </span>
+                    <tr key={p.id} className={cn('hover:bg-slate-50/70', !p.isActive && 'opacity-60')}>
+                      <td className={cn(td, 'whitespace-nowrap')}>
+                        <Badge tone={GROUP_TONES[groupOf(p.code)]} className="font-mono">
+                          {p.code}
+                        </Badge>
                       </td>
-
-                      {/* Mã giấy */}
-                      <td className="py-2.5 px-3 font-mono font-bold text-slate-700 whitespace-nowrap">
-                        {p.code}
+                      <td className={cn(td, 'min-w-48')}>
+                        <div className="font-medium text-slate-900">{p.name}</div>
+                        {p.description && <div className="text-xs text-slate-500 line-clamp-1">{p.description}</div>}
                       </td>
-
-                      {/* Tên loại giấy */}
-                      <td className="py-2.5 px-3">
-                        <strong className="block text-slate-900">{p.name}</strong>
-                        {p.description && <span className="text-[11px] text-slate-400">{p.description}</span>}
+                      <td className={cn(td, 'text-right tabular-nums')}>{p.gsm}</td>
+                      <td className={cn(td, 'text-center tabular-nums whitespace-nowrap')}>{sizeKey(p)}</td>
+                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap font-medium text-slate-900')}>{formatVnd(p.priceAbove500)}</td>
+                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap')}>{formatVnd(p.priceBelow500)}</td>
+                      <td className={cn(td, 'text-right tabular-nums whitespace-nowrap text-slate-600')}>{formatVnd(p.priceAbove500 / 500)}</td>
+                      <td className={cn(td, 'whitespace-nowrap text-slate-600')}>{p.supplier || DEFAULT_SUPPLIER}</td>
+                      <td className={cn(td, 'text-center')}>
+                        {p.isActive ? <Badge tone="green">Đang dùng</Badge> : <Badge tone="slate">Đã ẩn</Badge>}
                       </td>
-
-                      {/* GSM */}
-                      <td className="py-2.5 px-3 text-center font-bold text-blue-700 whitespace-nowrap">
-                        {p.gsm} gsm
-                      </td>
-
-                      {/* Khổ mẹ */}
-                      <td className="py-2.5 px-3 text-center font-medium text-slate-700 whitespace-nowrap">
-                        {p.parentWidthCm} × {p.parentHeightCm} cm
-                      </td>
-
-                      {/* Giá >= 500 tờ (trên ram) */}
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <div className="font-bold text-emerald-700 text-sm">
-                          {priceAbove > 0 ? `${priceAbove.toLocaleString('vi-VN')} đ` : '-'}
-                        </div>
-                        {priceAbove > 0 && (
-                          <div className="text-[10px] text-slate-400">
-                            ~{unitPriceAbove.toLocaleString('vi-VN')} đ/tờ
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Giá < 500 tờ (dưới ram) */}
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <div className="font-bold text-blue-700 text-sm">
-                          {priceBelow > 0 ? `${priceBelow.toLocaleString('vi-VN')} đ` : '-'}
-                        </div>
-                        {priceBelow > 0 && (
-                          <div className="text-[10px] text-slate-400">
-                            ~{unitPriceBelow.toLocaleString('vi-VN')} đ/tờ
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Trạng thái */}
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            p.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-                          }`}
-                        >
-                          {p.isActive ? 'Đang dùng' : 'Tạm khóa'}
-                        </span>
-                      </td>
-
-                      {/* Thao tác */}
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => handleOpenEdit(p)}
-                            className="p-1.5 text-slate-500 hover:text-blue-600 rounded hover:bg-slate-100"
-                            title="Sửa giá giấy"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(p.id)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50"
-                            title="Xóa loại giấy"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                      <td className={cn(td, 'text-right whitespace-nowrap')}>
+                        <div className="inline-flex items-center gap-0.5">
+                          <IconButton label="Sửa" disabled={busy} onClick={() => setEditor({ id: p.id, form: toForm(p) })}>
+                            <Pencil className="w-4 h-4" />
+                          </IconButton>
+                          <IconButton label={p.isActive ? 'Ẩn (ngừng dùng)' : 'Kích hoạt lại'} disabled={busy} onClick={() => toggleActive(p)}>
+                            {p.isActive ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </IconButton>
+                          <IconButton label="Xoá" tone="danger" disabled={busy} onClick={() => remove(p)}>
+                            <Trash2 className="w-4 h-4" />
+                          </IconButton>
                         </div>
                       </td>
                     </tr>
                   );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Modal Thêm/Sửa Giấy */}
-      {isModalOpen && editingPaper && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <h3 className="font-bold text-sm">
-                {editingPaper.id ? 'Cập Nhật Bảng Giá Giấy' : 'Thêm Mới Loại Giấy'}
-              </h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
+                })}
+              </tbody>
+            </Table>
+            <div className="px-4 py-2.5 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Hiển thị {formatNumber(filtered.length)} / {formatNumber(papers.length)} loại giấy
+                {loading && ' · đang cập nhật…'}
+              </span>
+              <span>Giá/tờ = giá ram (≥ 500 tờ) ÷ 500 · tính trên tờ khổ mẹ</span>
             </div>
+          </>
+        ) : null}
+      </Card>
 
-            <form onSubmit={handleSave} className="p-5 space-y-3 text-xs">
-              {/* Nhà Cung Cấp */}
-              <div>
-                <label className="block text-slate-600 font-medium mb-1">Nhà Cung Cấp (NCC) *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingPaper.supplier || ''}
-                  onChange={(e) => setEditingPaper({ ...editingPaper, supplier: e.target.value })}
-                  placeholder="Ví dụ: Thuận Phát, Mai Lam, Tân Phát Đạt..."
-                  className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 font-medium"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Mã Giấy *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingPaper.code || ''}
-                    onChange={(e) => setEditingPaper({ ...editingPaper, code: e.target.value })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Định Lượng (GSM) *</label>
-                  <input
-                    type="number"
-                    required
-                    value={editingPaper.gsm || 150}
-                    onChange={(e) => setEditingPaper({ ...editingPaper, gsm: Number(e.target.value) })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-medium mb-1">Tên Giấy Đầy Đủ *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingPaper.name || ''}
-                  onChange={(e) => setEditingPaper({ ...editingPaper, name: e.target.value })}
-                  className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Khổ Mẹ Rộng (cm) *</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    required
-                    value={editingPaper.parentWidthCm || 65}
-                    onChange={(e) => setEditingPaper({ ...editingPaper, parentWidthCm: Number(e.target.value) })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Khổ Mẹ Dài (cm) *</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    required
-                    value={editingPaper.parentHeightCm || 86}
-                    onChange={(e) => setEditingPaper({ ...editingPaper, parentHeightCm: Number(e.target.value) })}
-                    className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              {/* 2 Mức giá: >= 500 tờ và < 500 tờ */}
-              <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div>
-                  <label className="block text-emerald-800 font-bold mb-1">
-                    Giá &ge; 500 tờ (VNĐ/ram) *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    value={editingPaper.priceAbove500 || 0}
-                    onChange={(e) =>
-                      setEditingPaper({
-                        ...editingPaper,
-                        priceAbove500: Number(e.target.value),
-                        pricePerRam: Number(e.target.value),
-                      })
-                    }
-                    className="w-full border border-emerald-300 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 font-bold text-emerald-900 bg-white"
-                  />
-                  <span className="text-[10px] text-slate-400">
-                    Áp dụng khi dùng &ge; 500 tờ mẹ (~{Math.round((editingPaper.priceAbove500 || 0) / 500).toLocaleString('vi-VN')} đ/tờ)
-                  </span>
-                </div>
-                <div>
-                  <label className="block text-blue-800 font-bold mb-1">
-                    Giá &lt; 500 tờ (VNĐ/ram) *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    value={editingPaper.priceBelow500 || 0}
-                    onChange={(e) => setEditingPaper({ ...editingPaper, priceBelow500: Number(e.target.value) })}
-                    className="w-full border border-blue-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500 font-bold text-blue-900 bg-white"
-                  />
-                  <span className="text-[10px] text-slate-400">
-                    Bán lẻ khi dùng &lt; 500 tờ mẹ (~{Math.round((editingPaper.priceBelow500 || 0) / 500).toLocaleString('vi-VN')} đ/tờ)
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-medium mb-1">Hiệu / Ghi Chú / Ứng Dụng</label>
-                <input
-                  type="text"
-                  value={editingPaper.description || ''}
-                  onChange={(e) => setEditingPaper({ ...editingPaper, description: e.target.value })}
-                  placeholder="Ví dụ: AF - Indo, Nevia, Oji..."
-                  className="w-full border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="isActivePaper"
-                  checked={editingPaper.isActive ?? true}
-                  onChange={(e) => setEditingPaper({ ...editingPaper, isActive: e.target.checked })}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
-                />
-                <label htmlFor="isActivePaper" className="text-slate-700 font-medium cursor-pointer">
-                  Kích hoạt sử dụng loại giấy này
-                </label>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 font-medium"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Lưu Thông Tin
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {editor && (
+        <PaperEditor
+          id={editor.id}
+          initial={editor.form}
+          suppliers={suppliers}
+          sizes={sizes.slice(0, 6)}
+          onClose={() => setEditor(null)}
+          onSaved={(msg) => {
+            setEditor(null);
+            toast.success(msg);
+            reload();
+          }}
+        />
       )}
     </div>
   );
-};
+}
+
+// -----------------------------------------------------------------------------
+// Form thêm / sửa (chỉ được gắn khi mở – state khởi tạo từ props, không cần effect)
+// -----------------------------------------------------------------------------
+
+function PaperEditor({
+  id,
+  initial,
+  suppliers,
+  sizes,
+  onClose,
+  onSaved,
+}: {
+  id: number | null;
+  initial: PaperForm;
+  suppliers: string[];
+  sizes: { key: string; w: number; h: number }[];
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}) {
+  const uid = useId();
+  const formId = `${uid}-form`;
+  const supplierListId = `${uid}-suppliers`;
+  const [form, setForm] = useState<PaperForm>(initial);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [generalErrors, setGeneralErrors] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const set = <K extends PaperField>(key: K, value: PaperForm[K]) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    setFieldErrors((e) => (e[key] ? { ...e, [key]: undefined } : e));
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    // Kiểm tra nhanh phía trình duyệt – server vẫn kiểm tra đầy đủ
+    const local: FieldErrors = {};
+    if (!form.code.trim()) local.code = 'Thiếu Mã giấy.';
+    if (!form.name.trim()) local.name = 'Thiếu Tên giấy.';
+    if (form.priceAbove500 <= 0) local.priceAbove500 = 'Giá từ 500 tờ phải lớn hơn 0.';
+    if (Object.keys(local).length > 0) {
+      setFieldErrors(local);
+      setGeneralErrors([]);
+      return;
+    }
+
+    setSaving(true);
+    setGeneralErrors([]);
+    const body: PaperForm = {
+      ...form,
+      code: form.code.trim(),
+      name: form.name.trim(),
+      supplier: form.supplier.trim() || DEFAULT_SUPPLIER,
+      description: form.description.trim(),
+    };
+    try {
+      if (id === null) await api('/api/papers', { method: 'POST', body });
+      else await api(`/api/papers/${id}`, { method: 'PUT', body });
+      onSaved(id === null ? `Đã thêm giấy ${body.code}.` : `Đã cập nhật giấy ${body.code}.`);
+    } catch (err) {
+      const { general, fields } = splitErrors(err);
+      setFieldErrors(fields);
+      setGeneralErrors(general);
+      setSaving(false);
+    }
+  };
+
+  const perSheet = form.priceAbove500 / 500;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title={id === null ? 'Thêm loại giấy' : `Sửa giấy ${initial.code}`}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={saving}>
+            Huỷ
+          </Button>
+          <Button variant="primary" type="submit" form={formId} loading={saving}>
+            {id === null ? 'Thêm giấy' : 'Lưu thay đổi'}
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} onSubmit={submit} noValidate className="space-y-4">
+        {generalErrors.length > 0 && (
+          <Alert tone="error" title={generalErrors[0]}>
+            {generalErrors.length > 1 && (
+              <ul className="list-disc pl-4">
+                {generalErrors.slice(1).map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+            )}
+          </Alert>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="Mã giấy *" htmlFor={`${uid}-code`} error={fieldErrors.code} hint="VD: C150, I300… (ký tự đầu = nhóm giấy)">
+            <TextInput id={`${uid}-code`} value={form.code} onChange={(e) => set('code', e.target.value)} maxLength={80} className="font-mono" autoFocus />
+          </Field>
+          <Field label="Tên giấy *" htmlFor={`${uid}-name`} error={fieldErrors.name} className="sm:col-span-2">
+            <TextInput id={`${uid}-name`} value={form.name} onChange={(e) => set('name', e.target.value)} maxLength={200} placeholder="VD: Couche 150" />
+          </Field>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="Định lượng *" htmlFor={`${uid}-gsm`} error={fieldErrors.gsm}>
+            <NumberInput id={`${uid}-gsm`} value={form.gsm} onChange={(n) => set('gsm', n)} min={0} max={2000} allowDecimal={false} suffix="gsm" />
+          </Field>
+          <Field label="Khổ mẹ – rộng *" htmlFor={`${uid}-w`} error={fieldErrors.parentWidthCm}>
+            <NumberInput id={`${uid}-w`} value={form.parentWidthCm} onChange={(n) => set('parentWidthCm', n)} min={0} max={300} suffix="cm" />
+          </Field>
+          <Field label="Khổ mẹ – dài *" htmlFor={`${uid}-h`} error={fieldErrors.parentHeightCm}>
+            <NumberInput id={`${uid}-h`} value={form.parentHeightCm} onChange={(n) => set('parentHeightCm', n)} min={0} max={300} suffix="cm" />
+          </Field>
+        </div>
+        {sizes.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 -mt-2">
+            <span className="text-[11px] text-slate-400">Khổ thường dùng:</span>
+            {sizes.map((s) => {
+              const active = s.w === form.parentWidthCm && s.h === form.parentHeightCm;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => {
+                    set('parentWidthCm', s.w);
+                    set('parentHeightCm', s.h);
+                  }}
+                  className={cn(
+                    'text-[11px] px-2 py-0.5 rounded-md border tabular-nums transition-colors',
+                    active ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  {s.key}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="Giá 1 ram khi mua ≥ 500 tờ *"
+            htmlFor={`${uid}-p1`}
+            error={fieldErrors.priceAbove500}
+            hint={perSheet > 0 ? `≈ ${formatVnd(perSheet)} / tờ khổ mẹ` : undefined}
+          >
+            <NumberInput id={`${uid}-p1`} value={form.priceAbove500} onChange={(n) => set('priceAbove500', n)} min={0} step={1000} allowDecimal={false} suffix="đ" />
+          </Field>
+          <Field
+            label="Giá 1 ram khi mua lẻ < 500 tờ"
+            htmlFor={`${uid}-p2`}
+            error={fieldErrors.priceBelow500}
+            hint={form.priceBelow500 > 0 ? `≈ ${formatVnd(form.priceBelow500 / 500)} / tờ khổ mẹ` : 'Để 0 = dùng giá ≥ 500 tờ'}
+          >
+            <NumberInput id={`${uid}-p2`} value={form.priceBelow500} onChange={(n) => set('priceBelow500', n)} min={0} step={1000} allowDecimal={false} suffix="đ" />
+          </Field>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Nhà cung cấp" htmlFor={`${uid}-sup`} error={fieldErrors.supplier}>
+            <TextInput
+              id={`${uid}-sup`}
+              value={form.supplier}
+              onChange={(e) => set('supplier', e.target.value)}
+              list={supplierListId}
+              maxLength={100}
+              placeholder={DEFAULT_SUPPLIER}
+            />
+            <datalist id={supplierListId}>
+              {suppliers.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+          </Field>
+          <div className="flex items-end pb-2">
+            <Checkbox
+              checked={form.isActive}
+              onChange={(v) => set('isActive', v)}
+              label="Đang sử dụng"
+              description="Giấy bị ẩn sẽ không xuất hiện khi tính giá."
+            />
+          </div>
+        </div>
+
+        <Field label="Mô tả / ghi chú" htmlFor={`${uid}-desc`} error={fieldErrors.description}>
+          <Textarea id={`${uid}-desc`} value={form.description} onChange={(e) => set('description', e.target.value)} maxLength={500} rows={2} />
+        </Field>
+      </form>
+    </Modal>
+  );
+}
